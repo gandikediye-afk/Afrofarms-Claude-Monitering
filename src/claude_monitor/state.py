@@ -62,6 +62,13 @@ class State:
     def complete_item(self, plane: str, object_id: str) -> None:
         self.connection.execute("DELETE FROM work_queue WHERE plane=? AND object_id=?", (plane, object_id))
 
+    def queued(self, plane: str, limit: int = 100) -> list[sqlite3.Row]:
+        """Return durable work in FIFO order without removing it."""
+        return list(self.connection.execute(
+            "SELECT object_id,payload,enqueued_at FROM work_queue WHERE plane=? "
+            "ORDER BY enqueued_at LIMIT ?", (plane, limit)
+        ))
+
     def claim(self, kind: str, object_id: str) -> bool:
         """Atomically serialize page creation for a stable upstream identifier."""
         try:

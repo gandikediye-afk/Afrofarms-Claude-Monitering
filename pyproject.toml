@@ -7,6 +7,10 @@ name = "claude-monitor"
 version = "0.1.0"
 description = "Mirror Claude Enterprise compliance data into Notion"
 requires-python = ">=3.11"
+dependencies = [
+  "starlette>=0.37,<1",
+  "opentelemetry-proto>=1.25,<2",
+]
 
 [project.scripts]
 claude-monitor = "claude_monitor.cli:main"
