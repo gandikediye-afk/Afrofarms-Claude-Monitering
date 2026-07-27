@@ -1,0 +1,61 @@
+import json
+
+from starlette.testclient import TestClient
+
+from claude_monitor.otlp import Settings, create_app, normalize
+
+
+def envelope(event_id="evt-1"):
+    return {"resourceLogs": [{"resource": {"attributes": [
+        {"key": "service.name", "value": {"stringValue": "Claude Code"}}
+    ]}, "scopeLogs": [{"scope": {"name": "claude"}, "logRecords": [{
+        "timeUnixNano": "1000000000", "body": {"stringValue": "private transcript"},
+        "attributes": [
+            {"key": "event.id", "value": {"stringValue": event_id}},
+            {"key": "event.name", "value": {"stringValue": "tool.finished"}},
+            {"key": "prompt.id", "value": {"stringValue": "prompt-1"}},
+            {"key": "user.id", "value": {"stringValue": "user-1"}},
+            {"key": "sheet.cells_read", "value": {"intValue": "4"}},
+        ]}]}]}]}
+
+
+def settings(tmp_path):
+    return Settings("secret", "x-ingest-token", 4096, frozenset({"https://console.example"}),
+                    tmp_path / "state.db", None, None, 2.5)
+
+
+def test_normalization_drops_body_and_extracts_metadata():
+    record = normalize(envelope())[0]
+    assert record["event_id"] == "evt-1"
+    assert record["prompt_id"] == "prompt-1"
+    assert record["member_id"] == "user-1"
+    assert record["surface"] == "Claude Code"
+    assert record["cells_read"] == 4
+    assert "private transcript" not in json.dumps(record)
+
+
+def test_ingest_requires_https_auth_and_durably_deduplicates(tmp_path):
+    with TestClient(create_app(settings(tmp_path)), base_url="https://testserver") as client:
+        assert client.post("/v1/logs", json=envelope()).status_code == 401
+        headers = {"x-ingest-token": "secret", "content-type": "application/json"}
+        assert client.post("/v1/logs", content=json.dumps(envelope()), headers=headers).status_code == 202
+        assert client.post("/v1/logs", content=json.dumps(envelope()), headers=headers).status_code == 202
+        rows = client.app.state.db.queued("otel")
+        assert len(rows) == 1
+        assert "private transcript" not in rows[0]["payload"]
+
+
+def test_preflight_is_allowlisted_and_size_is_enforced(tmp_path):
+    with TestClient(create_app(settings(tmp_path)), base_url="https://testserver") as client:
+        assert client.options("/v1/logs", headers={"origin": "https://evil.example"}).status_code == 403
+        allowed = client.options("/v1/logs", headers={"origin": "https://console.example"})
+        assert allowed.status_code == 204
+        response = client.post("/v1/logs", content=b"x" * 4097,
+                               headers={"x-ingest-token": "secret", "content-type": "application/json"})
+        assert response.status_code == 413
+
+
+def test_plain_http_is_rejected(tmp_path):
+    with TestClient(create_app(settings(tmp_path)), base_url="http://testserver") as client:
+        response = client.post("/v1/logs", json=envelope(), headers={"x-ingest-token": "secret"})
+        assert response.status_code == 400
