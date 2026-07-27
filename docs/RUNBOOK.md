@@ -193,14 +193,15 @@ https://PUBLIC_HOSTNAME/ready
 
 Generate the ingest value directly in the platform secret manager (for example, with
 `openssl rand -base64 32`) and never save it in a local `.env` file or this repository.
+It must be at least 32 bytes; the service refuses to start otherwise.
 
 In `claude.ai → Organization settings → Office agents → Monitoring`:
 
 | Field | Value |
 |---|---|
-| OTLP endpoint | `https://claude-otel.afrofarms.example/` (HTTPS, port 443, publicly resolvable) |
-| OTLP protocol | `http/protobuf` |
-| OTLP headers | `Authorization: Bearer <the value of OTLP_SHARED_SECRET>` |
+| OTLP endpoint | `https://<your-deployment>` — base URL only, no path. The exporter appends `/v1/logs`. HTTPS, port 443, publicly resolvable. |
+| OTLP protocol | `http/protobuf` (the receiver also accepts the JSON variant) |
+| OTLP headers | `Authorization=Bearer <OTLP_SHARED_SECRET>` — the field takes `Key=Value`, **not** `Key: Value` |
 
 Then **verify end to end** — a misconfiguration here fails silently:
 
