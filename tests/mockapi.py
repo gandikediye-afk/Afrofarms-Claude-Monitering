@@ -86,6 +86,7 @@ class MockNotion:
         self.pages: dict[str, dict[str, Any]] = {}
         self.blocks: dict[str, list[dict[str, Any]]] = {}
         self.calls: list[tuple[str, str]] = []
+        self.query_results: list[dict[str, Any]] = []
         self._n = 0
 
     def open(self, request, timeout=None):  # noqa: ARG002
@@ -130,7 +131,7 @@ class MockNotion:
                               "next_cursor": None})
 
         if method == "POST" and path.endswith("/query"):
-            return _Response({"results": [], "has_more": False, "next_cursor": None})
+            return _Response({"results": self.query_results, "has_more": False, "next_cursor": None})
 
         if method == "GET" and (path.startswith("/databases/") or path.startswith("/data_sources/")):
             return _Response({"id": path.split("/")[2], "parent": {"page_id": "parent-page"},

@@ -23,6 +23,37 @@ Two separate telemetry planes exist, and they cover different surfaces:
 So the conversations you want come from the **pull** plane, and the thing you can point
 that OTLP field at is the **push** plane. The design runs both and merges them.
 
+## The simple webhook (what deploys today)
+
+`src/claude_monitor/simple.py` is the whole thing: Claude Office Agents posts an event,
+it writes a row to Notion. No database, no cron jobs, no queue.
+
+Three environment variables:
+
+```bash
+OTLP_SHARED_SECRET=   # openssl rand -base64 32 -- goes in Claude's "OTLP headers" box
+NOTION_TOKEN=         # your Notion integration token
+NOTION_DS_ACTIVITY=   # the Agent Activity data source id
+```
+
+Deploy (`vercel.json` and `api/index.py` are already wired to it), then in
+`claude.ai -> Organization settings -> Office agents -> Monitoring`:
+
+| Field | Value |
+|---|---|
+| OTLP endpoint | `https://your-app.vercel.app` (base URL, no path) |
+| OTLP protocol | `http/protobuf` (JSON also accepted) |
+| OTLP headers | `Authorization=Bearer <OTLP_SHARED_SECRET>` (`=`, not `:`) |
+
+Duplicates are avoided by asking Notion whether the Event ID already exists, so there is
+no local index to lose. If Notion is unreachable the endpoint answers 503 and the OTLP
+exporter retries.
+
+**This carries no conversation text.** Office Agents telemetry reports who used Claude, in
+which app, when, and how much. That is a limit of what Claude sends, not of this code.
+The fuller pipeline in `claude_monitor.serverless` (durable queue, chat-text sync via the
+Compliance API) remains in the repository for if that changes.
+
 ## Documents
 
 | Doc | Contents |

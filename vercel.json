@@ -2,11 +2,5 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "rewrites": [
     { "source": "/(.*)", "destination": "/api/index" }
-  ],
-  "crons": [
-    { "path": "/api/cron/drain", "schedule": "*/5 * * * *" }
-  ],
-  "functions": {
-    "api/index.py": { "maxDuration": 300 }
-  }
+  ]
 }
