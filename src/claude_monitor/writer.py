@@ -20,6 +20,24 @@ SCHEMAS: dict[str, dict[str, str]] = {
     "messages": {"Excerpt": "title", "Message ID": "rich_text", "Conversation": "relation", "Role": "select", "Sent At": "date", "Member Email": "email", "Characters": "number", "Attachments": "number", "Generated Files": "number", "Artifacts": "number", "Flags": "multi_select"},
 }
 
+DISPLAY_TO_SCHEMA = {
+    "Members": "members", "Projects": "projects", "Sync Runs": "sync_runs",
+    "Conversations": "conversations", "Agent Activity": "activity", "Messages": "messages",
+}
+
+
+def check_notion_config(notion: NotionClient, sources: dict[str, str]) -> list[tuple[str, str | None]]:
+    """Check every configured source, returning one result per source."""
+    results: list[tuple[str, str | None]] = []
+    for label, source_id in sources.items():
+        try:
+            notion.validate_data_source(label, source_id, SCHEMAS[DISPLAY_TO_SCHEMA[label]])
+        except Exception as exc:
+            results.append((label, str(exc)))
+        else:
+            results.append((label, None))
+    return results
+
 
 class Writer:
     def __init__(self, notion: NotionClient, state: State, config: Config):

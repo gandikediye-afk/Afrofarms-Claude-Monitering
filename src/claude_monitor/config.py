@@ -13,6 +13,40 @@ class ConfigError(ValueError):
     """Raised when service configuration is missing or invalid."""
 
 
+@dataclass(frozen=True, slots=True)
+class NotionConfig:
+    """The subset of environment configuration needed by ``notion check``."""
+
+    token: str
+    data_sources: dict[str, str]
+    rate_limit_rps: float = 2.5
+
+    @classmethod
+    def from_env(cls) -> "NotionConfig":
+        names = {
+            "Members": "NOTION_DS_MEMBERS",
+            "Projects": "NOTION_DS_PROJECTS",
+            "Sync Runs": "NOTION_DS_SYNC_RUNS",
+            "Conversations": "NOTION_DS_CONVERSATIONS",
+            "Agent Activity": "NOTION_DS_ACTIVITY",
+        }
+        missing = ["NOTION_TOKEN"] if not os.environ.get("NOTION_TOKEN", "").strip() else []
+        missing.extend(variable for variable in names.values() if not os.environ.get(variable, "").strip())
+        if missing:
+            raise ConfigError("missing required environment variables: " + ", ".join(missing))
+        try:
+            rate = float(os.environ.get("NOTION_RATE_LIMIT_RPS", "2.5"))
+        except ValueError as exc:
+            raise ConfigError("NOTION_RATE_LIMIT_RPS must be numeric") from exc
+        if rate <= 0:
+            raise ConfigError("NOTION_RATE_LIMIT_RPS must be positive")
+        sources = {label: os.environ[variable].strip() for label, variable in names.items()}
+        messages = os.environ.get("NOTION_DS_MESSAGES", "").strip()
+        if messages:
+            sources["Messages"] = messages
+        return cls(os.environ["NOTION_TOKEN"], sources, rate)
+
+
 _DURATION = re.compile(r"^(\d+(?:\.\d+)?)(s|m|h|d)?$")
 
 
