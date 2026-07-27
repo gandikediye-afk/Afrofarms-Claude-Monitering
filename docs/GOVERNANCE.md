@@ -1,5 +1,12 @@
 # Governance
 
+> **Scope of the current deployment.** Only the Office Agents telemetry webhook is
+> deployed. It records who used Claude, in which app, when, and how much — no conversation
+> text. That removes the content-exposure concerns in §6 and most of §1, but **not** the
+> employee-monitoring obligations: under the Kenya Data Protection Act 2019, "Amina used
+> Claude in Excel 40 times last week" is still personal data about an identified employee.
+> Sections 2 (notice and lawful basis), 3 (access control), and 5 (retention) apply in full.
+
 This pipeline copies every team member's Claude conversations — including whatever they
 happened to paste in — into Notion. That is what was asked for, and the design delivers it.
 This document covers what has to be true around it for that to be defensible.

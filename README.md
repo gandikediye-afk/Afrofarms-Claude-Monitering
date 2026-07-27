@@ -1,27 +1,29 @@
-# Afro Farms — Claude Conversation Monitoring
+# Afro Farms — Claude Office Agents monitoring
 
-Design for a service that captures Claude usage across the whole team and mirrors it
-into Notion databases.
+A webhook that receives Claude Office Agents telemetry and writes it to a Notion
+database. Deployed on Vercel; no database, no cron jobs, no queue.
 
-## Read this first
+## What it records, and what it does not
 
-The request was "a webhook that receives all conversations of all team members from
-Claude." **Anthropic does not push conversation content to a webhook.** There is no
-outbound event carrying chat transcripts, and the OTLP endpoint in
-`Organization settings → Office agents → Monitoring` does not carry them either.
+Claude posts an event each time someone uses it inside Excel, Word, PowerPoint, or
+Outlook. Each event becomes one Notion row:
 
-Two separate telemetry planes exist, and they cover different surfaces:
+| You get | You do not get |
+|---|---|
+| Who used Claude (email) | What they asked |
+| Which app (Excel, Word, …) | What Claude answered |
+| When (Notion stores minute precision) | Any conversation text at all |
+| Excel cells read / written / copied | |
+| `prompt.id`, grouping one prompt's events | |
 
-| | Compliance API | OpenTelemetry (OTLP) |
-|---|---|---|
-| Direction | **Pull** — you poll `api.anthropic.com` | **Push** — Claude posts to your collector |
-| Carries transcripts? | **Yes** — full user + assistant text, files, artifacts | **No** — event records only |
-| Surfaces | claude.ai chats and projects | Office agents, Claude Code, Cowork |
-| Plan | Claude Enterprise | Claude Enterprise / direct-provider |
-| Latency | ~1 min indexing lag | near real-time |
+**Claude does not send conversation text to any webhook** — no plan, no setting. Office
+Agents telemetry is structural by design. That is a property of what Claude emits, not a
+limitation of this code, and no configuration changes it.
 
-So the conversations you want come from the **pull** plane, and the thing you can point
-that OTLP field at is the **push** plane. The design runs both and merges them.
+If chat text is ever needed, `docs/DESIGN.md` documents the two routes that carry it —
+your organization's data export (Team or Enterprise) and the Compliance API (Enterprise) —
+and `src/claude_monitor/serverless.py` holds a built-and-tested pipeline for the second.
+Neither is wired into the deployment.
 
 ## The simple webhook (what deploys today)
 
