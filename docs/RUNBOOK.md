@@ -84,6 +84,18 @@ RETENTION_INTERVAL=24h
 DELETION_GRACE_PERIOD=7d
 ```
 
+The IDs can be discovered and immediately schema-checked using only an ephemeral integration
+token. Pass either the monitoring parent-page ID, or all of the database URLs:
+
+```bash
+NOTION_TOKEN=secret_... claude-monitor notion discover <parent-page-id>
+NOTION_TOKEN=secret_... claude-monitor notion discover <team-members-url> <projects-url> <sync-runs-url> <conversations-url> <activity-url>
+```
+
+Discovery prints a copyable `NOTION_DS_*` template with the token replaced by `[REDACTED]`.
+It requires the exact database titles documented in `NOTION-SCHEMA.md`, rejects duplicate
+titles, and runs the same property validation as `claude-monitor notion check`.
+
 Before starting the service, verify that every configured database is shared with the
 integration and matches the required property names and types in `NOTION-SCHEMA.md`:
 

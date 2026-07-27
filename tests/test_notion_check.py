@@ -4,7 +4,7 @@ import unittest
 import urllib.error
 from unittest.mock import patch
 
-from claude_monitor.cli import main
+from claude_monitor.cli import _discover, main
 from claude_monitor.notion_client import NotionClient, NotionError, SchemaError
 from claude_monitor.writer import SCHEMAS, check_notion_config
 
@@ -16,6 +16,13 @@ SOURCES = {
 
 
 class NotionCheckTests(unittest.TestCase):
+    @staticmethod
+    def database(title, source_id):
+        return {
+            "title": [{"plain_text": title}],
+            "data_sources": [{"id": source_id, "name": title}],
+        }
+
     def test_checks_all_sources_and_reports_schema_errors(self):
         class FakeNotion:
             def validate_data_source(self, name, source_id, schema):
@@ -60,6 +67,50 @@ class NotionCheckTests(unittest.TestCase):
             self.assertEqual(main(["notion", "check"]), 0)
         self.assertEqual(output.getvalue(), "OK  Members\n")
         self.assertNotIn("secret", output.getvalue())
+
+    def test_discover_parent_matches_documented_titles(self):
+        databases = [
+            self.database("Team Members", "members"),
+            self.database("Claude Projects", "projects"),
+            self.database("Sync Runs", "runs"),
+            self.database("Conversations", "chats"),
+            self.database("Agent Activity", "activity"),
+        ]
+
+        class FakeNotion:
+            def child_databases(self, page_id):
+                self.page_id = page_id
+                return databases
+
+        notion = FakeNotion()
+        parent, sources = _discover(notion, ["01234567-89ab-cdef-0123-456789abcdef"])
+        self.assertEqual(parent, "0123456789abcdef0123456789abcdef")
+        self.assertEqual(notion.page_id, parent)
+        self.assertEqual(sources["NOTION_DS_MEMBERS"], "members")
+
+    def test_discover_database_urls_and_rejects_duplicate_titles(self):
+        class FakeNotion:
+            def database(self, database_id):
+                return NotionCheckTests.database("Team Members", database_id)
+
+        with self.assertRaisesRegex(ValueError, "duplicate Notion database title 'Team Members'"):
+            _discover(FakeNotion(), [
+                "https://www.notion.so/Team-Members-0123456789abcdef0123456789abcdef",
+                "https://www.notion.so/Team-Members-fedcba9876543210fedcba9876543210",
+            ])
+
+    @patch("claude_monitor.cli.check_notion_config", return_value=[("Members", None)])
+    @patch("claude_monitor.cli._discover", return_value=("parent", {"NOTION_DS_MEMBERS": "members"}))
+    @patch("claude_monitor.cli.NotionClient")
+    def test_discover_cli_masks_token_and_runs_check(self, _client, _discover_call, check):
+        output = io.StringIO()
+        with patch.dict(os.environ, {"NOTION_TOKEN": "secret-token"}, clear=True), patch("sys.stdout", output):
+            self.assertEqual(main(["notion", "discover", "0123456789abcdef0123456789abcdef"]), 0)
+        self.assertIn("NOTION_TOKEN=[REDACTED]", output.getvalue())
+        self.assertIn("NOTION_DS_MEMBERS=members", output.getvalue())
+        self.assertIn("OK  Members", output.getvalue())
+        self.assertNotIn("secret-token", output.getvalue())
+        check.assert_called_once()
 
 
 if __name__ == "__main__":
