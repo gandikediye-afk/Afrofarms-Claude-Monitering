@@ -58,8 +58,7 @@ MESSAGE_PAGING_THRESHOLD=500          # page the messages endpoint above this
 ACTIVITY_TYPE_ALLOWLIST=claude_chat_created,claude_file_uploaded,compliance_api_accessed
 
 # OTLP receiver (push plane)
-OTLP_LISTEN_ADDR=0.0.0.0:8443
-OTLP_SHARED_SECRET=                   # matches the admin console header value
+OTLP_SHARED_SECRET=                   # >=32 random bytes; matches the Bearer token in Claude
 OTLP_ALLOWED_ORIGINS=                 # Office add-in origins, for CORS
 OTLP_MAX_BODY_BYTES=4194304
 
@@ -98,13 +97,26 @@ that must be reviewed quarterly.
 
 ## 4. Configure the OTLP push plane
 
+Deploy `render.yaml` (or the equivalent container definition on your platform), attach the
+declared persistent disk, and set every configuration value from §3 in the platform secret
+manager. After the platform assigns `PUBLIC_HOSTNAME`, the three public service URLs are:
+
+```
+https://PUBLIC_HOSTNAME/v1/logs
+https://PUBLIC_HOSTNAME/health
+https://PUBLIC_HOSTNAME/ready
+```
+
+Generate the ingest value directly in the platform secret manager (for example, with
+`openssl rand -base64 32`) and never save it in a local `.env` file or this repository.
+
 In `claude.ai → Organization settings → Office agents → Monitoring`:
 
 | Field | Value |
 |---|---|
 | OTLP endpoint | `https://claude-otel.afrofarms.example/` (HTTPS, port 443, publicly resolvable) |
-| OTLP protocol | `http/protobuf`, or `http/json` while debugging |
-| OTLP headers | `X-Ingest-Token: <the value of OTLP_SHARED_SECRET>` |
+| OTLP protocol | `http/protobuf` |
+| OTLP headers | `Authorization: Bearer <the value of OTLP_SHARED_SECRET>` |
 
 Then **verify end to end** — a misconfiguration here fails silently:
 

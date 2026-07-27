@@ -1,5 +1,7 @@
 import json
 
+from google.protobuf.json_format import ParseDict
+from opentelemetry.proto.collector.logs.v1.logs_service_pb2 import ExportLogsServiceRequest
 from starlette.testclient import TestClient
 
 from claude_monitor.otlp import Settings, create_app, normalize
@@ -20,8 +22,12 @@ def envelope(event_id="evt-1"):
 
 
 def settings(tmp_path):
-    return Settings("secret", "x-ingest-token", 4096, frozenset({"https://console.example"}),
+    return Settings("secret", "authorization", 4096, frozenset({"https://console.example"}),
                     tmp_path / "state.db", None, None, 2.5)
+
+
+def protobuf(value):
+    return ParseDict(value, ExportLogsServiceRequest()).SerializeToString()
 
 
 def test_normalization_drops_body_and_extracts_metadata():
@@ -37,9 +43,9 @@ def test_normalization_drops_body_and_extracts_metadata():
 def test_ingest_requires_https_auth_and_durably_deduplicates(tmp_path):
     with TestClient(create_app(settings(tmp_path)), base_url="https://testserver") as client:
         assert client.post("/v1/logs", json=envelope()).status_code == 401
-        headers = {"x-ingest-token": "secret", "content-type": "application/json"}
-        assert client.post("/v1/logs", content=json.dumps(envelope()), headers=headers).status_code == 202
-        assert client.post("/v1/logs", content=json.dumps(envelope()), headers=headers).status_code == 202
+        headers = {"authorization": "Bearer secret", "content-type": "application/x-protobuf"}
+        assert client.post("/v1/logs", content=protobuf(envelope()), headers=headers).status_code == 202
+        assert client.post("/v1/logs", content=protobuf(envelope()), headers=headers).status_code == 202
         rows = client.app.state.db.queued("otel")
         assert len(rows) == 1
         assert "private transcript" not in rows[0]["payload"]
@@ -51,11 +57,12 @@ def test_preflight_is_allowlisted_and_size_is_enforced(tmp_path):
         allowed = client.options("/v1/logs", headers={"origin": "https://console.example"})
         assert allowed.status_code == 204
         response = client.post("/v1/logs", content=b"x" * 4097,
-                               headers={"x-ingest-token": "secret", "content-type": "application/json"})
+                               headers={"authorization": "Bearer secret", "content-type": "application/x-protobuf"})
         assert response.status_code == 413
 
 
 def test_plain_http_is_rejected(tmp_path):
     with TestClient(create_app(settings(tmp_path)), base_url="http://testserver") as client:
-        response = client.post("/v1/logs", json=envelope(), headers={"x-ingest-token": "secret"})
+        response = client.post("/v1/logs", content=protobuf(envelope()),
+                               headers={"authorization": "Bearer secret", "content-type": "application/x-protobuf"})
         assert response.status_code == 400

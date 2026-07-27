@@ -30,7 +30,6 @@ from .state import State, utcnow
 
 LOG = logging.getLogger(__name__)
 PLANE = "otel"
-JSON_TYPES = {"application/json", "application/otlp+json"}
 PROTO_TYPES = {"application/x-protobuf", "application/protobuf"}
 
 
@@ -54,9 +53,9 @@ class Settings:
         secret = os.environ.get("OTLP_SHARED_SECRET", "")
         if not secret:
             raise RuntimeError("OTLP_SHARED_SECRET is required")
-        header = os.environ.get("OTLP_INGEST_HEADER", "authorization").strip().lower()
-        if not header or any(c.isspace() for c in header):
-            raise RuntimeError("OTLP_INGEST_HEADER is invalid")
+        if len(secret.encode("utf-8")) < 32:
+            raise RuntimeError("OTLP_SHARED_SECRET must contain at least 32 bytes")
+        header = "authorization"
         try:
             maximum = int(os.environ.get("OTLP_MAX_BODY_BYTES", "1048576"))
             rps = float(os.environ.get("NOTION_RATE_LIMIT_RPS", "2.5"))
@@ -190,9 +189,7 @@ async def _body(request: Request, maximum: int) -> bytes:
 def _decode(body: bytes, content_type: str) -> Mapping[str, Any]:
     media_type = content_type.split(";", 1)[0].strip().lower()
     try:
-        if media_type in JSON_TYPES:
-            value = json.loads(body)
-        elif media_type in PROTO_TYPES:
+        if media_type in PROTO_TYPES:
             message = ExportLogsServiceRequest.FromString(body)
             value = MessageToDict(message, preserving_proto_field_name=False)
         else:
@@ -216,8 +213,9 @@ async def ingest(request: Request) -> Response:
     origin = request.headers.get("origin")
     if request.url.scheme != "https":
         return JSONResponse({"error": "HTTPS required"}, status_code=400)
-    supplied = request.headers.get(settings.ingest_header, "")
-    if not hmac.compare_digest(supplied.encode(), settings.shared_secret.encode()):
+    supplied = request.headers.get("authorization", "")
+    expected = f"Bearer {settings.shared_secret}"
+    if not hmac.compare_digest(supplied.encode(), expected.encode()):
         return _cors(JSONResponse({"error": "unauthorized"}, status_code=401), origin, settings)
     try:
         body = await _body(request, settings.max_body_bytes)
@@ -245,8 +243,8 @@ async def options(request: Request) -> Response:
         return Response(status_code=403)
     response = Response(status_code=204)
     response.headers.update({"Access-Control-Allow-Origin": origin, "Access-Control-Allow-Methods": "POST, OPTIONS",
-                             "Access-Control-Allow-Headers": f"Content-Type, {settings.ingest_header}",
-                             "Access-Control-Max-Age": "600", "Vary": "Origin"})
+                             "Access-Control-Allow-Headers": "Authorization, Content-Type",
+                             "Access-Control-Max-Age": "86400", "Vary": "Origin"})
     return response
 
 
