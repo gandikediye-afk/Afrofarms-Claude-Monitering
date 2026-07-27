@@ -1,5 +1,10 @@
 # Notion schema
 
+> **Status: verified against a live Notion workspace on 2026-07-27.** All five databases
+> below were created from this DDL, a sample record was written across 24 properties and 8
+> property types, and it was read back with the relation joins resolving. One defect was
+> found — see [Notion date precision](#notion-date-precision-verified-defect).
+
 Five databases. Create them in dependency order — relations need the target's data source
 ID to exist first.
 
@@ -239,6 +244,39 @@ Rollups need the relation property to exist first, so add them in a second
 | Team Members | Total Messages | `ROLLUP('Conversations', 'Messages', 'sum')` |
 | Team Members | Latest Chat | `ROLLUP('Conversations', 'Last Activity', 'latest_date')` |
 | Claude Projects | Chats | `ROLLUP('Conversations', 'Chat ID', 'count')` |
+
+---
+
+## Notion date precision (verified defect)
+
+**Notion date properties store minute precision. Seconds are silently discarded.**
+
+Measured on a live write:
+
+| Written | Stored |
+|---|---|
+| `2026-04-10T08:09:10Z` | `2026-04-10T08:09:00.000Z` |
+| `2026-04-10T09:10:11Z` | `2026-04-10T09:10:00.000Z` |
+
+No error, no warning — the value is truncated on the way in. Consequences:
+
+- **`Last Activity` in Notion is not `chat.updated_at`.** It is that value rounded down to
+  the minute. Never read it back to reconstruct a sync window or a cursor.
+- The pipeline is unaffected **because** cursors are opaque strings held in the external
+  state store, never derived from Notion. This is a load-bearing reason for that design
+  choice, not an incidental one.
+- Do not "simplify" the design by dropping the state store and deriving
+  `updated_at.gte` from `MAX("Last Activity")`. Within-minute ordering is ambiguous after
+  truncation, and ties are broken by `id` on the API side but not recoverable from Notion.
+- If exact timestamps matter for audit, write the unmodified RFC 3339 string into a
+  `RICH_TEXT` property alongside the date property. Consider adding
+  `"Started (exact)" RICH_TEXT` and `"Last Activity (exact)" RICH_TEXT` to Conversations if
+  chain-of-custody requires second-level fidelity.
+
+One cosmetic note from the same test: Notion auto-linkifies bare domains in markdown
+content, so `claude.ai` in a transcript renders as a link. Harmless, but it means transcript
+text is not byte-identical to the source. The `Content Hash` property must be computed from
+the **API response**, not from what Notion stores.
 
 ---
 
