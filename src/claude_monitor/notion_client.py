@@ -16,7 +16,7 @@ import urllib.request
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any, Callable
-from .normalizer import redact
+from .normalizer import redact_structure
 
 
 class NotionError(RuntimeError):
@@ -205,9 +205,14 @@ def _chunks(value: str, limit: int = 1800) -> list[str]:
 
 
 def _safe(value: Any) -> Any:
-    """Final pre-Notion boundary: no caller can accidentally persist unredacted text."""
-    encoded, _ = redact(json.dumps(value, ensure_ascii=False), True)
-    return json.loads(encoded)
+    """Final pre-Notion boundary: no caller can accidentally persist unredacted text.
+
+    Walks the structure instead of the serialized blob. Redacting the whole JSON
+    string also hits the identity fields that attribute a record to a person --
+    "Member Email", "Actor Email", and the members' own "Email" -- which turns
+    every row into an unattributable orphan.
+    """
+    return redact_structure(value, True)[0]
 
 
 def rich_text(value: str | None) -> list[dict[str, Any]]:

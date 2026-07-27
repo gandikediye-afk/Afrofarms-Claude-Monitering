@@ -98,9 +98,9 @@ class AnthropicClient:
                 raise ComplianceError(0, self._safe(exc), self.last_request_id) from exc
         raise AssertionError("retry loop exhausted")
 
-    def page(self, path: str, params: Mapping[str, Any] | None = None) -> Page:
+    def page(self, path: str, params: Mapping[str, Any] | None = None, *, data_key: str = "data") -> Page:
         body, request_id = self._get(path, params)
-        return Page(list(body.get("data", [])), bool(body.get("has_more")), body.get("first_id"), body.get("last_id"), request_id)
+        return Page(list(body.get(data_key, [])), bool(body.get("has_more")), body.get("first_id"), body.get("last_id"), request_id)
 
     def pages(self, path: str, params: Mapping[str, Any] | None = None, *, cursor_parameter: str = "after_id") -> Iterator[Page]:
         current = dict(params or {})
@@ -130,7 +130,10 @@ class AnthropicClient:
             return ComplianceCheck(False, "Compliance API returned an invalid response")
         return ComplianceCheck(True, "Compliance API transcript access is available (HTTP 200)")
     def chat(self, chat_id: str) -> dict[str, Any]: return self._get(f"/apps/chats/{urllib.parse.quote(chat_id, safe='')}")[0]
-    def messages(self, chat_id: str, **params: Any) -> Page: return self.page(f"/apps/chats/{urllib.parse.quote(chat_id, safe='')}/messages", params)
+    # The messages endpoint returns the chat object with its turns under
+    # "chat_messages"; unlike every other list endpoint it has no "data" key, so
+    # reading "data" here silently yields an empty transcript for every chat.
+    def messages(self, chat_id: str, **params: Any) -> Page: return self.page(f"/apps/chats/{urllib.parse.quote(chat_id, safe='')}/messages", params, data_key="chat_messages")
     def activities(self, **params: Any) -> Page: return self.page("/activities", params)
     def activity(self, activity_id: str) -> dict[str, Any]: return self._get(f"/activities/{urllib.parse.quote(activity_id, safe='')}")[0]
     def users(self, **params: Any) -> Page: return self.page("/users", params)
