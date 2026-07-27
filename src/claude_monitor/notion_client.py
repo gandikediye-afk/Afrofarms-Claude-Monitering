@@ -109,6 +109,29 @@ class NotionClient:
     def data_source(self, data_source_id: str) -> dict[str, Any]:
         return self.request("GET", f"/data_sources/{urllib.parse.quote(data_source_id, safe='')}")
 
+    def database(self, database_id: str) -> dict[str, Any]:
+        return self.request("GET", f"/databases/{urllib.parse.quote(database_id, safe='')}")
+
+    def child_databases(self, page_id: str) -> list[dict[str, Any]]:
+        """Return database objects for databases directly contained by a page."""
+        databases: list[dict[str, Any]] = []
+        cursor: str | None = None
+        while True:
+            query = {"page_size": "100"}
+            if cursor:
+                query["start_cursor"] = cursor
+            response = self.request(
+                "GET", f"/blocks/{urllib.parse.quote(page_id, safe='')}/children?{urllib.parse.urlencode(query)}"
+            )
+            for block in response.get("results", []):
+                if block.get("type") == "child_database":
+                    databases.append(self.database(block["id"]))
+            if not response.get("has_more"):
+                return databases
+            cursor = response.get("next_cursor")
+            if not cursor:
+                raise NotionError("Notion returned a paginated child list without a next cursor")
+
     def validate_data_source(self, name: str, data_source_id: str, required: dict[str, str], *, parent_page_id: str | None = None) -> None:
         try:
             source = self.data_source(data_source_id)
