@@ -1,7 +1,0 @@
-starlette<1,>=0.37
-opentelemetry-proto<2,>=1.25
-uvicorn[standard]<1,>=0.30
-
-[dev]
-pytest<9,>=8
-httpx<1,>=0.27
