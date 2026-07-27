@@ -1,58 +1,161 @@
-"""Rate-limited Notion writer used by all sync planes."""
+"""Small, dependency-free Notion API client.
+
+The limiter is deliberately process-global: constructing one client per sync plane must not
+multiply the integration's request rate.
+"""
 
 from __future__ import annotations
 
 import json
 import random
+import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
-from typing import Any
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
+from typing import Any, Callable
+
+
+class NotionError(RuntimeError):
+    pass
+
+
+class SchemaError(NotionError):
+    pass
+
+
+class _TokenBucket:
+    def __init__(self, rate: float):
+        self.rate, self.capacity, self.tokens = rate, max(1.0, rate), max(1.0, rate)
+        self.updated = time.monotonic()
+        self.lock = threading.Lock()
+
+    def acquire(self) -> None:
+        while True:
+            with self.lock:
+                now = time.monotonic()
+                self.tokens = min(self.capacity, self.tokens + (now - self.updated) * self.rate)
+                self.updated = now
+                if self.tokens >= 1:
+                    self.tokens -= 1
+                    return
+                delay = (1 - self.tokens) / self.rate
+            time.sleep(delay)
+
+
+_buckets: dict[float, _TokenBucket] = {}
+_buckets_lock = threading.Lock()
+
+
+def _bucket(rate: float) -> _TokenBucket:
+    with _buckets_lock:
+        return _buckets.setdefault(rate, _TokenBucket(rate))
+
+
+def _retry_after(value: str | None) -> float | None:
+    if not value:
+        return None
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        try:
+            when = parsedate_to_datetime(value)
+            if when.tzinfo is None:
+                when = when.replace(tzinfo=timezone.utc)
+            return max(0.0, (when - datetime.now(timezone.utc)).total_seconds())
+        except (TypeError, ValueError, OverflowError):
+            return None
 
 
 class NotionClient:
-    def __init__(self, token: str, rps: float = 2.5):
-        self._token, self._interval, self._last = token, 1 / rps, 0.0
+    def __init__(self, token: str, rps: float = 2.5, *, opener: Callable[..., Any] = urllib.request.urlopen):
+        if rps <= 0:
+            raise ValueError("rps must be positive")
+        self._token, self._limiter, self._opener = token, _bucket(rps), opener
 
     def request(self, method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+        encoded = json.dumps(body, ensure_ascii=False).encode("utf-8") if body is not None else None
         for attempt in range(6):
-            wait = self._interval - (time.monotonic() - self._last)
-            if wait > 0: time.sleep(wait)
-            request = urllib.request.Request("https://api.notion.com/v1" + path, data=json.dumps(body).encode() if body is not None else None, method=method,
-                headers={"Authorization": f"Bearer {self._token}", "Notion-Version": "2025-09-03", "Content-Type": "application/json"})
+            self._limiter.acquire()
+            request = urllib.request.Request(
+                "https://api.notion.com/v1" + path, data=encoded, method=method,
+                headers={"Authorization": f"Bearer {self._token}", "Notion-Version": "2025-09-03", "Content-Type": "application/json"},
+            )
             try:
-                self._last = time.monotonic()
-                with urllib.request.urlopen(request, timeout=30) as response: return json.load(response)
+                with self._opener(request, timeout=30) as response:
+                    return json.load(response)
             except urllib.error.HTTPError as exc:
-                if exc.code in {409, 429} or 500 <= exc.code < 600:
-                    if attempt < 5:
-                        retry = exc.headers.get("retry-after")
-                        delay = float(retry) if retry and retry.replace(".", "", 1).isdigit() else min(20, 0.5 * 2**attempt)
-                        time.sleep(delay + random.uniform(0, .25)); continue
-                raise RuntimeError(f"Notion API returned HTTP {exc.code}: {exc.read(2048).decode('utf-8', 'replace')}") from exc
+                # An ambiguous page-creation retry can create twins.  The durable writer
+                # reconciles those operations by stable ID on its next pass instead.
+                retry_safe = method != "POST" or path != "/pages" or exc.code in {409, 425, 429}
+                transient = (exc.code in {408, 409, 425, 429} or 500 <= exc.code < 600) and retry_safe
+                if transient and attempt < 5:
+                    delay = _retry_after(exc.headers.get("Retry-After"))
+                    time.sleep((delay if delay is not None else min(20, .5 * 2**attempt)) + random.uniform(0, .25))
+                    continue
+                raise NotionError(f"Notion API returned HTTP {exc.code}: {exc.read(2048).decode('utf-8', 'replace')}") from exc
+            except (TimeoutError, urllib.error.URLError) as exc:
+                if attempt < 5 and not (method == "POST" and path == "/pages"):
+                    time.sleep(min(20, .5 * 2**attempt) + random.uniform(0, .25)); continue
+                raise NotionError(f"Notion API request failed: {exc}") from exc
         raise AssertionError("retry loop exhausted")
 
+    def data_source(self, data_source_id: str) -> dict[str, Any]:
+        return self.request("GET", f"/data_sources/{urllib.parse.quote(data_source_id, safe='')}")
+
+    def validate_data_source(self, name: str, data_source_id: str, required: dict[str, str]) -> None:
+        properties = self.data_source(data_source_id).get("properties", {})
+        errors = []
+        for prop, expected in required.items():
+            actual = (properties.get(prop) or {}).get("type")
+            if actual != expected:
+                errors.append(f"{prop!r}: expected {expected}, got {actual or 'missing'}")
+        if errors:
+            raise SchemaError(f"Notion data source {name!r} ({data_source_id}) is incompatible: " + "; ".join(errors))
+
     def create_page(self, data_source_id: str, properties: dict[str, Any], children: list[dict[str, Any]] | None = None) -> str:
-        result = self.request("POST", "/pages", {"parent": {"type": "data_source_id", "data_source_id": data_source_id}, "properties": properties, **({"children": children} if children else {})})
+        result = self.request("POST", "/pages", {"parent": {"type": "data_source_id", "data_source_id": data_source_id}, "properties": properties, **({"children": children[:100]} if children else {})})
         return result["id"]
 
-    def update_page(self, page_id: str, properties: dict[str, Any]) -> None: self.request("PATCH", f"/pages/{page_id}", {"properties": properties})
+    def update_page(self, page_id: str, properties: dict[str, Any], *, archived: bool | None = None) -> None:
+        body: dict[str, Any] = {"properties": properties}
+        if archived is not None: body["archived"] = archived
+        self.request("PATCH", f"/pages/{page_id}", body)
+
     def append_blocks(self, page_id: str, blocks: list[dict[str, Any]]) -> None:
-        for start in range(0, len(blocks), 100): self.request("PATCH", f"/blocks/{page_id}/children", {"children": blocks[start:start + 100]})
+        for start in range(0, len(blocks), 100):
+            self.request("PATCH", f"/blocks/{page_id}/children", {"children": blocks[start:start + 100]})
+
+    def strip_blocks(self, page_id: str) -> None:
+        while True:
+            response = self.request("GET", f"/blocks/{page_id}/children?page_size=100")
+            for child in response.get("results", []): self.request("DELETE", f"/blocks/{child['id']}")
+            if not response.get("has_more") or not response.get("results"): break
 
     def replace_blocks(self, page_id: str, blocks: list[dict[str, Any]]) -> None:
-        cursor = None
-        while True:
-            suffix = f"?page_size=100&start_cursor={cursor}" if cursor else "?page_size=100"
-            response = self.request("GET", f"/blocks/{page_id}/children{suffix}")
-            for child in response.get("results", []): self.request("DELETE", f"/blocks/{child['id']}")
-            if not response.get("has_more"): break
-            cursor = response.get("next_cursor")
-        self.append_blocks(page_id, blocks)
+        self.strip_blocks(page_id); self.append_blocks(page_id, blocks)
+
+    def find_by_property(self, data_source_id: str, property_name: str, value: str) -> str | None:
+        """Recovery-only lookup; normal updates always use the local page index."""
+        response = self.request("POST", f"/data_sources/{data_source_id}/query", {"page_size": 2, "filter": {"property": property_name, "rich_text": {"equals": value}}})
+        results = response.get("results", [])
+        if len(results) > 1: raise NotionError(f"duplicate {property_name}={value!r} in Notion")
+        return results[0]["id"] if results else None
 
 
-def title(value: str) -> dict[str, Any]: return {"title": [{"text": {"content": value[:2000]}}]}
-def text(value: str | None) -> dict[str, Any]: return {"rich_text": [{"text": {"content": (value or "")[:2000]}}]}
+def _chunks(value: str, limit: int = 1800) -> list[str]:
+    """Split at Python Unicode code-point boundaries (never encoded byte boundaries)."""
+    return [value[i:i + limit] for i in range(0, len(value), limit)] or [""]
+
+
+def rich_text(value: str | None) -> list[dict[str, Any]]:
+    return [{"type": "text", "text": {"content": part}} for part in _chunks(value or "", 1800)]
+
+
+def title(value: str) -> dict[str, Any]: return {"title": rich_text(value)}
+def text(value: str | None) -> dict[str, Any]: return {"rich_text": rich_text(value)}
 def date(value: str | None) -> dict[str, Any]: return {"date": {"start": value} if value else None}
 def number(value: int | float) -> dict[str, Any]: return {"number": value}
 def select(value: str) -> dict[str, Any]: return {"select": {"name": value}}

@@ -12,6 +12,7 @@ from .anthropic_client import AnthropicClient
 from .config import Config, ConfigError
 from .notion_client import NotionClient
 from .state import State
+from .writer import Writer
 from .sync import activities, chats, directory
 
 
@@ -50,6 +51,7 @@ def main(argv: list[str] | None = None) -> int:
     except ConfigError as exc:
         parser().error(str(exc))
     client, notion, state = _services(config)
+    Writer(notion, state, config).validate_schema()
     if args.command == "directory": directory.sync(client, notion, state, config)
     elif args.command == "backfill":
         run = chats.sync(client, notion, state, config, backfill=True, dry_run=args.dry_run)
