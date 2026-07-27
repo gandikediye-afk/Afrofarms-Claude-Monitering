@@ -66,12 +66,15 @@ def build_app() -> Starlette:
         finally:
             state.connection.close()
         async with original_lifespan(app):
+            access = AnthropicClient(config.compliance_access_key, config.compliance_base_url).compliance_check()
+            if not access.ok:
+                LOG.error("Transcript synchronization disabled: %s. OTLP activity ingestion remains available.", access.message)
             intervals = {"chats": config.chat_poll_interval,
                          "activities": config.activity_poll_interval,
                          "directory": config.directory_poll_interval,
                          "retention": config.retention_interval}
             tasks = [asyncio.create_task(_poll(job, interval, config), name=f"poll-{job}")
-                     for job, interval in intervals.items()]
+                     for job, interval in intervals.items() if job != "chats" or access.ok]
             try:
                 yield
             finally:

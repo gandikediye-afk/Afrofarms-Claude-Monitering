@@ -45,6 +45,18 @@ The `src/claude_monitor` package provides the pull-plane service and installs th
 `claude-monitor` executable. Configure it with the environment variables in the runbook,
 then run `directory sync`, `backfill --dry-run`, `backfill`, and `daemon` in that order.
 
+Before starting transcript synchronization, verify the access key and read scope:
+
+```console
+ANTHROPIC_COMPLIANCE_ACCESS_KEY=... claude-monitor compliance check
+```
+
+The check makes only `GET /v1/compliance/apps/chats?limit=1` against the configured
+Anthropic API origin. A `403` usually means the credential is the wrong key type or lacks
+read scope; an unavailable endpoint usually means Compliance API access is not enabled.
+The key is never printed. Transcript synchronization stays disabled until the check passes,
+while the independent OTLP activity collector remains available.
+
 The implementation keeps cursors, idempotency indexes, sanitized durable work, and audit
 runs in SQLite. Binary attachment retrieval remains disabled; only safe attachment metadata
 is mirrored.

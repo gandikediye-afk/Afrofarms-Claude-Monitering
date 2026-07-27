@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import json
 import re
+import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -129,8 +130,10 @@ class Config:
         ):
             raise ConfigError("RETENTION_CLASS_DAYS must be a non-empty JSON object of positive integer days")
         base = get("COMPLIANCE_BASE_URL", "https://api.anthropic.com").rstrip("/")
-        if not base.startswith("https://"):
-            raise ConfigError("COMPLIANCE_BASE_URL must use HTTPS")
+        parsed_base = urllib.parse.urlsplit(base)
+        if (parsed_base.scheme != "https" or not parsed_base.netloc or parsed_base.username or
+                parsed_base.password or parsed_base.path or parsed_base.query or parsed_base.fragment):
+            raise ConfigError("COMPLIANCE_BASE_URL must be an HTTPS origin without credentials, path, query, or fragment")
         redaction_enabled = boolean(get("REDACTION_ENABLED", "true"))
         if not redaction_enabled:
             raise ConfigError("REDACTION_ENABLED cannot be disabled in production")
