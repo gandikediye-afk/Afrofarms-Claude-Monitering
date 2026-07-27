@@ -69,6 +69,8 @@ def _process(chat: dict[str, Any], client: AnthropicClient, notion: NotionClient
     canonical, digest = canonical_chat(safe_chat, normalized)
     # Only sanitized content is allowed into durable storage.
     state.stage("chats", chat_id, {"chat": {k: safe_chat.get(k) for k in ("id", "name", "created_at", "updated_at", "deleted_at")}, "canonical": canonical})
+    # The stable Claude chat ID is the only lookup key.  The durable local index avoids a
+    # Notion query on every poll and makes email/name changes irrelevant to identity.
     row = state.chat(chat_id)
     if row and row["content_hash"] == digest:
         state.complete_item("chats", chat_id); return "unchanged"

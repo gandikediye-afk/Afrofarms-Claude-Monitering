@@ -84,6 +84,17 @@ RETENTION_INTERVAL=24h
 DELETION_GRACE_PERIOD=7d
 ```
 
+Before starting the service, verify that every configured database is shared with the
+integration and matches the required property names and types in `NOTION-SCHEMA.md`:
+
+```bash
+claude-monitor notion check
+```
+
+The command checks Members, Projects, Sync Runs, Conversations, Agent Activity, and Messages
+when `NOTION_DS_MESSAGES` is set. It needs only the `NOTION_TOKEN`, `NOTION_DS_*` variables,
+and optional `NOTION_RATE_LIMIT_RPS`; it never displays the token.
+
 Startup fails closed unless `PRODUCTION_READINESS` exactly records completion of all three
 governance gates. The integration must be shared only with the configured data sources,
 which must all be direct children of `NOTION_PARENT_PAGE_ID`; the service verifies that

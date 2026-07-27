@@ -96,18 +96,30 @@ class NotionClient:
                     delay = _retry_after(exc.headers.get("Retry-After"))
                     time.sleep((delay if delay is not None else min(20, .5 * 2**attempt)) + random.uniform(0, .25))
                     continue
-                raise NotionError(f"Notion API returned HTTP {exc.code}: {exc.read(2048).decode('utf-8', 'replace')}") from exc
+                detail = exc.read(2048).decode("utf-8", "replace").replace(self._token, "[REDACTED]")
+                exc.close()
+                raise NotionError(f"Notion API returned HTTP {exc.code}: {detail}") from None
             except (TimeoutError, urllib.error.URLError) as exc:
                 if attempt < 5 and not (method == "POST" and path == "/pages"):
                     time.sleep(min(20, .5 * 2**attempt) + random.uniform(0, .25)); continue
-                raise NotionError(f"Notion API request failed: {exc}") from exc
+                detail = str(exc).replace(self._token, "[REDACTED]")
+                raise NotionError(f"Notion API request failed: {detail}") from None
         raise AssertionError("retry loop exhausted")
 
     def data_source(self, data_source_id: str) -> dict[str, Any]:
         return self.request("GET", f"/data_sources/{urllib.parse.quote(data_source_id, safe='')}")
 
     def validate_data_source(self, name: str, data_source_id: str, required: dict[str, str], *, parent_page_id: str | None = None) -> None:
-        source = self.data_source(data_source_id)
+        try:
+            source = self.data_source(data_source_id)
+        except NotionError as exc:
+            message = str(exc)
+            if "HTTP 403" in message or "HTTP 404" in message:
+                raise SchemaError(
+                    f"{name} is not reachable; share that database with the Notion integration "
+                    f"and verify its NOTION_DS_* identifier"
+                ) from None
+            raise SchemaError(f"{name} could not be checked: {message}") from None
         properties = source.get("properties", {})
         errors = []
         for prop, expected in required.items():

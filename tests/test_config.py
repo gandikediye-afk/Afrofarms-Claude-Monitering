@@ -2,7 +2,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from claude_monitor.config import Config, ConfigError, duration
+from claude_monitor.config import Config, ConfigError, NotionConfig, duration
 
 
 REQUIRED = {name: "value" for name in (
@@ -40,7 +40,15 @@ class ConfigTests(unittest.TestCase):
     def test_redaction_cannot_be_disabled(self):
         values = dict(REQUIRED); values["REDACTION_ENABLED"] = "false"
         with patch.dict(os.environ, values, clear=True):
-            with self.assertRaisesRegex(ConfigError, "cannot be disabled"): Config.from_env()
+                with self.assertRaisesRegex(ConfigError, "cannot be disabled"): Config.from_env()
+
+    def test_notion_check_configuration_is_independent(self):
+        values = {key: value for key, value in REQUIRED.items() if key.startswith("NOTION_")}
+        values["NOTION_DS_MESSAGES"] = "messages-id"
+        with patch.dict(os.environ, values, clear=True):
+            config = NotionConfig.from_env()
+        self.assertEqual(config.data_sources["Messages"], "messages-id")
+        self.assertNotIn("ANTHROPIC_COMPLIANCE_ACCESS_KEY", values)
 
 
 if __name__ == "__main__": unittest.main()

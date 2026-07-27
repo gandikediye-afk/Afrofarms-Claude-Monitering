@@ -9,10 +9,10 @@ import sys
 import time
 
 from .anthropic_client import AnthropicClient
-from .config import Config, ConfigError
+from .config import Config, ConfigError, NotionConfig
 from .notion_client import NotionClient
 from .state import State
-from .writer import Writer
+from .writer import Writer, check_notion_config
 from .retention import RetentionWorker
 from .sync import activities, chats, directory
 
@@ -23,6 +23,8 @@ def parser() -> argparse.ArgumentParser:
     directory_command = commands.add_parser("directory"); directory_sub = directory_command.add_subparsers(dest="directory_command", required=True); directory_sub.add_parser("sync")
     backfill = commands.add_parser("backfill"); backfill.add_argument("--dry-run", action="store_true", help="read and estimate without conversation writes")
     commands.add_parser("daemon")
+    notion = commands.add_parser("notion")
+    notion.add_subparsers(dest="notion_command", required=True).add_parser("check")
     return result
 
 
@@ -49,6 +51,17 @@ def _daemon(client: AnthropicClient, notion: NotionClient, state: State, config:
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    if args.command == "notion":
+        try:
+            notion_config = NotionConfig.from_env()
+        except ConfigError as exc:
+            parser().error(str(exc))
+        results = check_notion_config(
+            NotionClient(notion_config.token, notion_config.rate_limit_rps), notion_config.data_sources
+        )
+        for name, error in results:
+            print(f"{'OK' if error is None else 'ERROR'}  {name}" + (f": {error}" if error else ""))
+        return 1 if any(error for _, error in results) else 0
     try: config = Config.from_env()
     except ConfigError as exc:
         parser().error(str(exc))
