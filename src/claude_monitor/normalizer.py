@@ -5,17 +5,26 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import logging
 from typing import Any, Iterable
 
 SECRET_PATTERNS = (
-    re.compile(r"\bsk-ant-[A-Za-z0-9_-]{12,}\b"),
+    re.compile(r"\b(?:sk-ant|sk-proj|sk_live|rk_live)[-_A-Za-z0-9]{12,}\b"),
     re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"),
     re.compile(r"(?i)\b(?:api[_ -]?key|token|password|secret)\s*[:=]\s*[^\s,;]{8,}"),
+    re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{12,}"),
+    re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
+    re.compile(r"(?i)\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqps?)://[^\s]+"),
 )
 PII_PATTERNS = (
     re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I),
     re.compile(r"\b(?:\+?\d[ .()-]?){8,15}\d\b"),
+    re.compile(r"(?i)\b(?:national[ _-]?id|ssn|nin)\s*[:=#-]?\s*[A-Z0-9-]{6,20}\b"),
+    re.compile(r"\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b"),  # IBAN
+    re.compile(r"(?i)\b(?:account|acct)\s*(?:number|no\.?|#)?\s*[:=-]?\s*\d{6,18}\b"),
 )
+
+_security_logger = logging.getLogger("claude_monitor.security")
 
 
 def redact(text: str, enabled: bool = True) -> tuple[str, set[str]]:
@@ -23,7 +32,10 @@ def redact(text: str, enabled: bool = True) -> tuple[str, set[str]]:
     flags: set[str] = set()
     for pattern in SECRET_PATTERNS:
         text, count = pattern.subn("[REDACTED SECRET]", text)
-        if count: flags.update(("possible-secret", "redacted"))
+        if count:
+            flags.update(("possible-secret", "redacted"))
+            # Never include source text or the match in an incident alert.
+            _security_logger.warning("likely live credential discovered; count=%d action=rotate-and-investigate", count)
     for pattern in PII_PATTERNS:
         text, count = pattern.subn("[REDACTED PII]", text)
         if count: flags.update(("possible-pii", "redacted"))

@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
+from .normalizer import redact
 
 
 def utcnow() -> str: return datetime.now(timezone.utc).isoformat()
@@ -33,6 +34,7 @@ class State:
         CREATE TABLE IF NOT EXISTS work_queue (plane TEXT NOT NULL, object_id TEXT NOT NULL, payload TEXT NOT NULL, enqueued_at TEXT NOT NULL, PRIMARY KEY(plane, object_id));
         CREATE TABLE IF NOT EXISTS claims (kind TEXT NOT NULL, object_id TEXT NOT NULL, claimed_at TEXT NOT NULL, PRIMARY KEY(kind, object_id));
         CREATE TABLE IF NOT EXISTS pending_writes (kind TEXT NOT NULL, object_id TEXT NOT NULL, content_hash TEXT NOT NULL, started_at TEXT NOT NULL, PRIMARY KEY(kind, object_id));
+        CREATE TABLE IF NOT EXISTS governance_actions (id INTEGER PRIMARY KEY AUTOINCREMENT, page_id TEXT NOT NULL, source_id TEXT, action TEXT NOT NULL, reason TEXT NOT NULL, acted_at TEXT NOT NULL, UNIQUE(page_id, action, reason));
         COMMIT;
         """)
 
@@ -50,8 +52,16 @@ class State:
         return row[0] if row else None
 
     def stage(self, plane: str, object_id: str, payload: dict[str, Any]) -> None:
-        # Redacted/normalized payloads only: callers must never stage raw message content.
-        self.connection.execute("INSERT INTO work_queue VALUES(?,?,?,?) ON CONFLICT(plane,object_id) DO UPDATE SET payload=excluded.payload,enqueued_at=excluded.enqueued_at", (plane, object_id, json.dumps(payload, sort_keys=True), utcnow()))
+        # Defense in depth: sanitize the serialized payload at the SQLite boundary too.
+        safe, _ = redact(json.dumps(payload, sort_keys=True), True)
+        self.connection.execute("INSERT INTO work_queue VALUES(?,?,?,?) ON CONFLICT(plane,object_id) DO UPDATE SET payload=excluded.payload,enqueued_at=excluded.enqueued_at", (plane, object_id, safe, utcnow()))
+
+    def record_governance_action(self, page_id: str, source_id: str | None, action: str, reason: str) -> bool:
+        cursor = self.connection.execute(
+            "INSERT OR IGNORE INTO governance_actions(page_id,source_id,action,reason,acted_at) VALUES(?,?,?,?,?)",
+            (page_id, source_id, action, reason, utcnow()),
+        )
+        return cursor.rowcount > 0
 
     def finish_walk(self, plane: str, cursor: str | None) -> None:
         """Advance only after the caller has durably processed the entire fetched walk."""

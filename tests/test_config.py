@@ -7,7 +7,8 @@ from claude_monitor.config import Config, ConfigError, duration
 
 REQUIRED = {name: "value" for name in (
     "ANTHROPIC_COMPLIANCE_ACCESS_KEY", "NOTION_TOKEN", "NOTION_DS_MEMBERS", "NOTION_DS_PROJECTS",
-    "NOTION_DS_SYNC_RUNS", "NOTION_DS_CONVERSATIONS", "NOTION_DS_ACTIVITY")}
+    "NOTION_DS_SYNC_RUNS", "NOTION_DS_CONVERSATIONS", "NOTION_DS_ACTIVITY", "NOTION_PARENT_PAGE_ID")}
+REQUIRED["PRODUCTION_READINESS"] = "employee-notice:complete,lawful-basis:complete,access-approval:complete"
 
 
 class ConfigTests(unittest.TestCase):
@@ -25,6 +26,21 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.chat_page_limit, 100)
         self.assertFalse(config.download_attachments)
         self.assertEqual(config.compliance_access_key, "value")
+
+    def test_production_readiness_fails_closed(self):
+        values = dict(REQUIRED); values.pop("PRODUCTION_READINESS")
+        with patch.dict(os.environ, values, clear=True):
+            with self.assertRaisesRegex(ConfigError, "PRODUCTION_READINESS"): Config.from_env()
+
+    def test_partial_readiness_is_rejected(self):
+        values = dict(REQUIRED); values["PRODUCTION_READINESS"] = "employee-notice:complete"
+        with patch.dict(os.environ, values, clear=True):
+            with self.assertRaisesRegex(ConfigError, "explicitly confirm"): Config.from_env()
+
+    def test_redaction_cannot_be_disabled(self):
+        values = dict(REQUIRED); values["REDACTION_ENABLED"] = "false"
+        with patch.dict(os.environ, values, clear=True):
+            with self.assertRaisesRegex(ConfigError, "cannot be disabled"): Config.from_env()
 
 
 if __name__ == "__main__": unittest.main()

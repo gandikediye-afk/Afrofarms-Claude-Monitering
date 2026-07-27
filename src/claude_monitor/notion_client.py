@@ -16,6 +16,7 @@ import urllib.request
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any, Callable
+from .normalizer import redact
 
 
 class NotionError(RuntimeError):
@@ -105,8 +106,9 @@ class NotionClient:
     def data_source(self, data_source_id: str) -> dict[str, Any]:
         return self.request("GET", f"/data_sources/{urllib.parse.quote(data_source_id, safe='')}")
 
-    def validate_data_source(self, name: str, data_source_id: str, required: dict[str, str]) -> None:
-        properties = self.data_source(data_source_id).get("properties", {})
+    def validate_data_source(self, name: str, data_source_id: str, required: dict[str, str], *, parent_page_id: str | None = None) -> None:
+        source = self.data_source(data_source_id)
+        properties = source.get("properties", {})
         errors = []
         for prop, expected in required.items():
             actual = (properties.get(prop) or {}).get("type")
@@ -114,17 +116,34 @@ class NotionClient:
                 errors.append(f"{prop!r}: expected {expected}, got {actual or 'missing'}")
         if errors:
             raise SchemaError(f"Notion data source {name!r} ({data_source_id}) is incompatible: " + "; ".join(errors))
+        if parent_page_id:
+            parent = source.get("parent") or {}
+            actual = parent.get("page_id")
+            if not actual and parent.get("database_id"):
+                database = self.request("GET", f"/databases/{urllib.parse.quote(parent['database_id'], safe='')}")
+                database_parent = database.get("parent") or {}
+                actual = database_parent.get("page_id")
+            if actual != parent_page_id:
+                raise SchemaError(f"Notion data source {name!r} is outside approved parent page {parent_page_id!r}")
+
+    def query_data_source(self, data_source_id: str, *, start_cursor: str | None = None, filter: dict[str, Any] | None = None) -> dict[str, Any]:
+        body: dict[str, Any] = {"page_size": 100}
+        if start_cursor: body["start_cursor"] = start_cursor
+        if filter: body["filter"] = filter
+        return self.request("POST", f"/data_sources/{data_source_id}/query", body)
 
     def create_page(self, data_source_id: str, properties: dict[str, Any], children: list[dict[str, Any]] | None = None) -> str:
+        properties = _safe(properties); children = _safe(children) if children else None
         result = self.request("POST", "/pages", {"parent": {"type": "data_source_id", "data_source_id": data_source_id}, "properties": properties, **({"children": children[:100]} if children else {})})
         return result["id"]
 
     def update_page(self, page_id: str, properties: dict[str, Any], *, archived: bool | None = None) -> None:
-        body: dict[str, Any] = {"properties": properties}
+        body: dict[str, Any] = {"properties": _safe(properties)}
         if archived is not None: body["archived"] = archived
         self.request("PATCH", f"/pages/{page_id}", body)
 
     def append_blocks(self, page_id: str, blocks: list[dict[str, Any]]) -> None:
+        blocks = _safe(blocks)
         for start in range(0, len(blocks), 100):
             self.request("PATCH", f"/blocks/{page_id}/children", {"children": blocks[start:start + 100]})
 
@@ -148,6 +167,12 @@ class NotionClient:
 def _chunks(value: str, limit: int = 1800) -> list[str]:
     """Split at Python Unicode code-point boundaries (never encoded byte boundaries)."""
     return [value[i:i + limit] for i in range(0, len(value), limit)] or [""]
+
+
+def _safe(value: Any) -> Any:
+    """Final pre-Notion boundary: no caller can accidentally persist unredacted text."""
+    encoded, _ = redact(json.dumps(value, ensure_ascii=False), True)
+    return json.loads(encoded)
 
 
 def rich_text(value: str | None) -> list[dict[str, Any]]:

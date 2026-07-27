@@ -1,0 +1,7 @@
+{
+  "synthetic_content": "sk-ant-api01-SYNTHETICONLY123456 Bearer fake.token.value123456 -----BEGIN PRIVATE KEY-----\nSYNTHETIC\n-----END PRIVATE KEY----- postgres://demo:fakepass@localhost/db national id: TEST-123456 +254 700 123456 GB82WEST12345698765432 account number 123456789",
+  "retention": {"last_activity": "2024-01-01T00:00:00Z", "class": "standard"},
+  "legal_hold": {"last_activity": "2020-01-01T00:00:00Z", "class": "legal-hold"},
+  "soft_delete": {"deleted_at": "2026-01-01T00:00:00Z"},
+  "duplicate_delivery": ["chat-synthetic-1", "chat-synthetic-1"]
+}

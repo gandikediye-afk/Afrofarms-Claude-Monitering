@@ -72,13 +72,26 @@ NOTION_DS_CONVERSATIONS=
 NOTION_DS_ACTIVITY=
 NOTION_DS_MESSAGES=                   # blank = Messages database disabled
 NOTION_RATE_LIMIT_RPS=2.5             # Notion allows an average of 3
+NOTION_PARENT_PAGE_ID=                # restricted Compliance parent; enforced at startup
 
 # Behaviour
 MIRROR_TRANSCRIPTS=true               # false = metadata-only mode
 DOWNLOAD_ATTACHMENTS=false
 REDACTION_ENABLED=true
 STATE_DB_PATH=/var/lib/claude-monitor/state.db
+PRODUCTION_READINESS=employee-notice:complete,lawful-basis:complete,access-approval:complete
+RETENTION_CLASS_DAYS='{"standard":365,"sensitive":90,"extended":1095}'
+RETENTION_INTERVAL=24h
+DELETION_GRACE_PERIOD=7d
 ```
+
+Startup fails closed unless `PRODUCTION_READINESS` exactly records completion of all three
+governance gates. The integration must be shared only with the configured data sources,
+which must all be direct children of `NOTION_PARENT_PAGE_ID`; the service verifies that
+parent for every data source before syncing. Restrict that parent to the named Compliance
+group and disable workspace-default, guest, and public-link access. Notion does not expose
+all sharing settings through this API, so those restrictions remain an administrator control
+that must be reviewed quarterly.
 
 `STATE_DB_PATH` must be on a **persistent volume**. Losing it loses the cursors and the
 `chat_id → page_id` index, which forces a full re-backfill.
