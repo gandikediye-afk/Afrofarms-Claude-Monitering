@@ -4,11 +4,7 @@
     { "source": "/(.*)", "destination": "/api/index" }
   ],
   "crons": [
-    { "path": "/api/cron/activities", "schedule": "*/5 * * * *" },
-    { "path": "/api/cron/drain",      "schedule": "*/5 * * * *" },
-    { "path": "/api/cron/chats",      "schedule": "*/15 * * * *" },
-    { "path": "/api/cron/directory",  "schedule": "0 3 * * *" },
-    { "path": "/api/cron/retention",  "schedule": "30 3 * * *" }
+    { "path": "/api/cron/drain", "schedule": "*/5 * * * *" }
   ],
   "functions": {
     "api/index.py": { "maxDuration": 300 }
