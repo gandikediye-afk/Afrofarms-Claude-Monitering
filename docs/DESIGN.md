@@ -296,10 +296,10 @@ you type into `Organization settings → Office agents → Monitoring → OTLP e
   the collector base URL (e.g. `https://claude-otel.afrofarms.example/`) and let the exporter
   append the signal path.
 - **Protocol:** the dropdown offers OTLP/HTTP variants. Choose `http/protobuf` if your
-  collector speaks it; `http/json` is easier to debug and to hand-parse. Pick one and keep the
-  receiver strict about `Content-Type`.
+  collector speaks it. This receiver accepts only `http/protobuf` and remains strict about
+  `Content-Type`.
 - **Headers:** the `OTLP headers` field is the only authentication available. Put a
-  high-entropy shared secret there, e.g. `X-Ingest-Token: <32 bytes base64url>`. Verify it with
+  high-entropy shared secret there as `Authorization: Bearer <32 bytes base64url>`. Verify it with
   a constant-time compare and reject with `401` otherwise. Rotate on a schedule; the field
   accepts a new value without redeploying the collector.
 
@@ -313,7 +313,7 @@ surfaced in the admin console. This has been reported against the Excel add-in
 ```
 Access-Control-Allow-Origin: <the add-in origin, or * if you accept that>
 Access-Control-Allow-Methods: POST, OPTIONS
-Access-Control-Allow-Headers: content-type, x-ingest-token
+Access-Control-Allow-Headers: authorization, content-type
 Access-Control-Max-Age: 86400
 ```
 

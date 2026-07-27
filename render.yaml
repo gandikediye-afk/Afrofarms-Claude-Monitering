@@ -1,0 +1,35 @@
+services:
+  - type: web
+    name: claude-monitor
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: STATE_DB_PATH
+        value: /var/lib/claude-monitor/state.db
+      - key: OTLP_SHARED_SECRET
+        sync: false
+      - key: ANTHROPIC_COMPLIANCE_ACCESS_KEY
+        sync: false
+      - key: NOTION_TOKEN
+        sync: false
+      - key: NOTION_DS_MEMBERS
+        sync: false
+      - key: NOTION_DS_PROJECTS
+        sync: false
+      - key: NOTION_DS_SYNC_RUNS
+        sync: false
+      - key: NOTION_DS_CONVERSATIONS
+        sync: false
+      - key: NOTION_DS_ACTIVITY
+        sync: false
+      - key: NOTION_PARENT_PAGE_ID
+        sync: false
+      - key: PRODUCTION_READINESS
+        sync: false
+      - key: OTLP_ALLOWED_ORIGINS
+        sync: false
+    disk:
+      name: claude-monitor-state
+      mountPath: /var/lib/claude-monitor
+      sizeGB: 1
