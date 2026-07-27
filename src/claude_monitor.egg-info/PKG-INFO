@@ -1,0 +1,11 @@
+Metadata-Version: 2.4
+Name: claude-monitor
+Version: 0.1.0
+Summary: Mirror Claude Enterprise compliance data into Notion
+Requires-Python: >=3.11
+Requires-Dist: starlette<1,>=0.37
+Requires-Dist: opentelemetry-proto<2,>=1.25
+Requires-Dist: uvicorn[standard]<1,>=0.30
+Provides-Extra: dev
+Requires-Dist: pytest<9,>=8; extra == "dev"
+Requires-Dist: httpx<1,>=0.27; extra == "dev"

@@ -1,4 +1,5 @@
 import json
+import sqlite3
 
 from google.protobuf.json_format import ParseDict
 from opentelemetry.proto.collector.logs.v1.logs_service_pb2 import ExportLogsServiceRequest
@@ -46,9 +47,15 @@ def test_ingest_requires_https_auth_and_durably_deduplicates(tmp_path):
         headers = {"authorization": "Bearer secret", "content-type": "application/x-protobuf"}
         assert client.post("/v1/logs", content=protobuf(envelope()), headers=headers).status_code == 202
         assert client.post("/v1/logs", content=protobuf(envelope()), headers=headers).status_code == 202
-        rows = client.app.state.db.queued("otel")
+        # TestClient runs the app's event loop on its own thread, and that is the
+        # thread that opened app.state.db. Reading that connection from here would
+        # raise ProgrammingError -- an artifact of the harness, not of the service,
+        # whose ingest path only ever touches SQLite from the loop thread. Read the
+        # committed rows through an independent connection instead.
+        rows = list(sqlite3.connect(tmp_path / "state.db").execute(
+            "SELECT object_id, payload FROM work_queue WHERE plane='otel'"))
         assert len(rows) == 1
-        assert "private transcript" not in rows[0]["payload"]
+        assert "private transcript" not in rows[0][1]
 
 
 def test_preflight_is_allowlisted_and_size_is_enforced(tmp_path):

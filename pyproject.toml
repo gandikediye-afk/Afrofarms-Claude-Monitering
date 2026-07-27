@@ -13,6 +13,14 @@ dependencies = [
   "uvicorn[standard]>=0.30,<1",
 ]
 
+[project.optional-dependencies]
+# starlette.testclient imports httpx at module scope, so `pytest` cannot even
+# collect tests/test_otlp.py without it.
+dev = [
+  "pytest>=8,<9",
+  "httpx>=0.27,<1",
+]
+
 [project.scripts]
 claude-monitor = "claude_monitor.cli:main"
 

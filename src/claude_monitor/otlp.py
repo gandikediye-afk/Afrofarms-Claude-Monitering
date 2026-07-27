@@ -172,11 +172,15 @@ def normalize(envelope: Mapping[str, Any]) -> list[dict[str, Any]]:
 async def _body(request: Request, maximum: int) -> bytes:
     length = request.headers.get("content-length")
     if length:
+        # Parse inside the guard, compare outside it: OtlpError subclasses ValueError,
+        # so raising the size error in here would be caught by our own except clause
+        # and downgraded to "invalid Content-Length" (400 instead of 413).
         try:
-            if int(length) > maximum:
-                raise OtlpError("request body is too large")
+            declared = int(length)
         except ValueError as exc:
             raise OtlpError("invalid Content-Length") from exc
+        if declared > maximum:
+            raise OtlpError("request body is too large")
     chunks, size = [], 0
     async for chunk in request.stream():
         size += len(chunk)

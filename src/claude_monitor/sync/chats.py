@@ -60,10 +60,10 @@ def _process(chat: dict[str, Any], client: AnthropicClient, notion: NotionClient
     normalized = normalize_messages(messages, config.redaction_enabled)
     safe_chat = dict(chat)
     safe_chat["name"], name_flags = redact(str(chat.get("name") or ""), config.redaction_enabled)
+    # The member's own address identifies the record's subject; it is not PII leaked
+    # into content. Redacting it empties "Member Email" and breaks the Member relation,
+    # leaving conversations that cannot be attributed to anyone.
     safe_user = dict(chat.get("user") or {})
-    if safe_user.get("email_address"):
-        safe_user["email_address"], email_flags = redact(str(safe_user["email_address"]), config.redaction_enabled)
-        name_flags |= email_flags
     safe_chat["user"] = safe_user
     normalized["flags"] = sorted(set(normalized["flags"]) | name_flags)
     canonical, digest = canonical_chat(safe_chat, normalized)

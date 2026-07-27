@@ -42,6 +42,42 @@ def redact(text: str, enabled: bool = True) -> tuple[str, set[str]]:
     return text, flags
 
 
+# Identity fields are the subject of a record, not PII leaked into its content.
+# Redacting them strips the join keys that attribute a conversation or an event to a
+# team member, which is the whole point of the archive: the email regex matches a
+# plain member address, so a blanket pass over a serialized payload silently empties
+# every "Member Email" / "Actor Email" property and breaks the Actor relation.
+# Content is still redacted; these keys are not.
+IDENTITY_KEYS = frozenset({
+    "actor_email", "email", "email_address", "member_email", "user_email",
+    "actor_id", "user_id", "member_id", "owner_id",
+    "id", "event_id", "chat_id", "conversation_id", "message_id", "prompt_id",
+    "project_id", "object_id", "page_id", "notion_page_id", "version_id",
+})
+
+
+def redact_structure(value: Any, enabled: bool = True, key: str | None = None) -> tuple[Any, set[str]]:
+    """Redact free text throughout a payload while preserving identity fields."""
+    if not enabled:
+        return value, set()
+    flags: set[str] = set()
+    if isinstance(value, dict):
+        result: dict[str, Any] = {}
+        for child_key, child in value.items():
+            result[child_key], found = redact_structure(child, enabled, child_key)
+            flags |= found
+        return result, flags
+    if isinstance(value, list):
+        items = []
+        for child in value:
+            redacted, found = redact_structure(child, enabled, key)
+            items.append(redacted); flags |= found
+        return items, flags
+    if isinstance(value, str) and key not in IDENTITY_KEYS:
+        return redact(value, True)
+    return value, flags
+
+
 def _metadata(item: dict[str, Any], keys: tuple[str, ...]) -> dict[str, Any]:
     return {key: item.get(key) for key in keys if item.get(key) is not None}
 

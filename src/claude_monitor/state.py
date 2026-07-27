@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
-from .normalizer import redact
+from .normalizer import redact_structure
 
 
 def utcnow() -> str: return datetime.now(timezone.utc).isoformat()
@@ -52,8 +52,11 @@ class State:
         return row[0] if row else None
 
     def stage(self, plane: str, object_id: str, payload: dict[str, Any]) -> None:
-        # Defense in depth: sanitize the serialized payload at the SQLite boundary too.
-        safe, _ = redact(json.dumps(payload, sort_keys=True), True)
+        # Defense in depth: sanitize the payload at the SQLite boundary too. Walk the
+        # structure rather than the serialized blob, so identity fields survive as join
+        # keys while every free-text value is still redacted.
+        safe_payload, _ = redact_structure(payload, True)
+        safe = json.dumps(safe_payload, sort_keys=True)
         self.connection.execute("INSERT INTO work_queue VALUES(?,?,?,?) ON CONFLICT(plane,object_id) DO UPDATE SET payload=excluded.payload,enqueued_at=excluded.enqueued_at", (plane, object_id, safe, utcnow()))
 
     def record_governance_action(self, page_id: str, source_id: str | None, action: str, reason: str) -> bool:
