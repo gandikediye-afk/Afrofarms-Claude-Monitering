@@ -39,6 +39,12 @@ route is a capped-lookback CSV from `Organization settings → Data and privacy`
 chat, file, or project content. Confirm the plan before implementation starts —
 [`docs/RUNBOOK.md`](docs/RUNBOOK.md) has the check.
 
-## Status
+## Implementation
 
-Design only. No implementation in this repository yet.
+The `src/claude_monitor` package provides the pull-plane service and installs the
+`claude-monitor` executable. Configure it with the environment variables in the runbook,
+then run `directory sync`, `backfill --dry-run`, `backfill`, and `daemon` in that order.
+
+The implementation keeps cursors, idempotency indexes, sanitized durable work, and audit
+runs in SQLite. Binary attachment retrieval remains disabled; only safe attachment metadata
+is mirrored.
