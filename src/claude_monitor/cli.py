@@ -25,6 +25,9 @@ def parser() -> argparse.ArgumentParser:
     directory_command = commands.add_parser("directory"); directory_sub = directory_command.add_subparsers(dest="directory_command", required=True); directory_sub.add_parser("sync")
     backfill = commands.add_parser("backfill"); backfill.add_argument("--dry-run", action="store_true", help="read and estimate without conversation writes")
     commands.add_parser("daemon")
+    compliance = commands.add_parser("compliance")
+    compliance_commands = compliance.add_subparsers(dest="compliance_command", required=True)
+    compliance_commands.add_parser("check")
     notion = commands.add_parser("notion")
     notion_commands = notion.add_subparsers(dest="notion_command", required=True)
     notion_commands.add_parser("check")
@@ -106,7 +109,7 @@ def _services(config: Config) -> tuple[AnthropicClient, NotionClient, State]:
             NotionClient(config.notion_token, config.notion_rate_limit_rps), State(config.state_db_path))
 
 
-def _daemon(client: AnthropicClient, notion: NotionClient, state: State, config: Config) -> None:
+def _daemon(client: AnthropicClient, notion: NotionClient, state: State, config: Config, *, transcript_access: bool) -> None:
     stopping = False
     def stop(*_: object) -> None:
         nonlocal stopping; stopping = True
@@ -115,7 +118,8 @@ def _daemon(client: AnthropicClient, notion: NotionClient, state: State, config:
     while not stopping:
         now = time.monotonic()
         if now >= due["activities"]: activities.sync(client, notion, state, config); due["activities"] = now + config.activity_poll_interval
-        if now >= due["chats"]: chats.sync(client, notion, state, config); due["chats"] = now + config.chat_poll_interval
+        if transcript_access and now >= due["chats"]: chats.sync(client, notion, state, config); due["chats"] = now + config.chat_poll_interval
+        elif not transcript_access: due["chats"] = now + config.chat_poll_interval
         if now >= due["directory"]: directory.sync(client, notion, state, config); due["directory"] = now + config.directory_poll_interval
         if now >= due["retention"]: RetentionWorker(notion, state, config).run_once(); due["retention"] = now + config.retention_interval
         time.sleep(min(1.0, max(0.05, min(due.values()) - time.monotonic())))
@@ -124,6 +128,16 @@ def _daemon(client: AnthropicClient, notion: NotionClient, state: State, config:
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    if args.command == "compliance":
+        key = os.environ.get("ANTHROPIC_COMPLIANCE_ACCESS_KEY", "").strip()
+        if not key:
+            parser().error("missing required environment variable: ANTHROPIC_COMPLIANCE_ACCESS_KEY")
+        try:
+            result = AnthropicClient(key, os.environ.get("COMPLIANCE_BASE_URL", "https://api.anthropic.com")).compliance_check()
+        except ValueError as exc:
+            parser().error(str(exc).replace(key, "[REDACTED]"))
+        print(f"{'OK' if result.ok else 'ERROR'}  {result.message.replace(key, '[REDACTED]')}")
+        return 0 if result.ok else 1
     if args.command == "notion":
         if args.notion_command == "discover":
             token = os.environ.get("NOTION_TOKEN", "").strip()
@@ -166,6 +180,10 @@ def main(argv: list[str] | None = None) -> int:
     except ConfigError as exc:
         parser().error(str(exc))
     client, notion, state = _services(config)
+    transcript_access = client.compliance_check() if args.command in ("backfill", "daemon") else None
+    if args.command == "backfill" and transcript_access is not None and not transcript_access.ok:
+        print(f"ERROR  Transcript synchronization refused: {transcript_access.message}", file=sys.stderr)
+        return 1
     Writer(notion, state, config).validate_schema()
     if args.command == "directory": directory.sync(client, notion, state, config)
     elif args.command == "backfill":
@@ -173,7 +191,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.dry_run:
             blocks_estimate = run.records * 3
             print(f"Estimated chats: {run.records}; Notion calls: ~{run.records + (blocks_estimate + 99) // 100}; duration: ~{(run.records + (blocks_estimate + 99) // 100) / config.notion_rate_limit_rps:.0f}s")
-    else: _daemon(client, notion, state, config)
+    else:
+        assert transcript_access is not None
+        if not transcript_access.ok:
+            logging.error("Transcript synchronization disabled: %s. OTLP activity ingestion remains available independently.", transcript_access.message)
+        _daemon(client, notion, state, config, transcript_access=transcript_access.ok)
     return 0
 
 
