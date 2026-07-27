@@ -10,6 +10,7 @@ from ..normalizer import canonical_chat, normalize_messages, redact, transcript_
 from ..notion_client import NotionClient, date, number, relation, select, text, title
 from ..state import State
 from ..writer import Writer
+from ..retention import tombstone_properties
 from .common import Run
 
 
@@ -47,8 +48,13 @@ def _process(chat: dict[str, Any], client: AnthropicClient, notion: NotionClient
         if exc.status != 404: raise
         row = state.chat(chat_id)
         if row and not dry_run:
+            from datetime import datetime, timezone
+            when = datetime.now(timezone.utc)
             notion.strip_blocks(row["notion_page_id"])
-            notion.update_page(row["notion_page_id"], {"Tombstoned": {"checkbox": True}, "Deleted At": date(chat.get("deleted_at") or chat.get("updated_at"))})
+            props = tombstone_properties("upstream-hard-delete-or-expiry", when)
+            props["Deleted At"] = date(chat.get("deleted_at") or chat.get("updated_at") or when.isoformat())
+            notion.update_page(row["notion_page_id"], props)
+            state.record_governance_action(row["notion_page_id"], chat_id, "tombstone", "upstream-hard-delete-or-expiry")
             state.put_chat(chat_id, row["notion_page_id"], row["content_hash"], row["message_count"], chat.get("deleted_at") or chat.get("updated_at"))
         return "tombstoned"
     normalized = normalize_messages(messages, config.redaction_enabled)
@@ -83,9 +89,8 @@ def _process(chat: dict[str, Any], client: AnthropicClient, notion: NotionClient
         state.put_chat(chat_id, page_id, digest, len(messages), chat.get("deleted_at")); state.complete_item("chats", chat_id)
         Writer(notion, state, config).write_messages(normalized["messages"], page_id, safe_user.get("email_address"))
         if chat.get("deleted_at"):
-            # Governance default: a deleted transcript is not left live. Legal-hold
-            # pages are intentionally handled by the separate retention job.
-            notion.update_page(page_id, {"Deleted At": date(chat["deleted_at"])}, archived=True)
+            # Mark now; the retention worker removes content after the configured grace period.
+            notion.update_page(page_id, {"Deleted At": date(chat["deleted_at"])})
         return outcome
     finally: state.release("chat", chat_id)
 

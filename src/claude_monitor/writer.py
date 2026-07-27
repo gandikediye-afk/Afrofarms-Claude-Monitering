@@ -30,7 +30,8 @@ class Writer:
                    "sync_runs": self.config.notion_ds_sync_runs, "conversations": self.config.notion_ds_conversations,
                    "activity": self.config.notion_ds_activity}
         if self.config.notion_ds_messages: sources["messages"] = self.config.notion_ds_messages
-        for name, source in sources.items(): self.notion.validate_data_source(name, source, SCHEMAS[name])
+        for name, source in sources.items():
+            self.notion.validate_data_source(name, source, SCHEMAS[name], parent_page_id=self.config.notion_parent_page_id)
 
     def upsert(self, kind: str, source_id: str, data_source_id: str, id_property: str,
                properties: dict[str, Any], *, content_hash: str | None = None) -> tuple[str, bool]:
@@ -72,4 +73,4 @@ class Writer:
             self.notion.strip_blocks(page_id)
             self.notion.update_page(page_id, {"Tombstoned": {"checkbox": True}})
         elif soft_deleted:
-            self.notion.update_page(page_id, {}, archived=True)
+            self.notion.update_page(page_id, {"Deleted At": date(__import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat())})

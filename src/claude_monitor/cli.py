@@ -13,6 +13,7 @@ from .config import Config, ConfigError
 from .notion_client import NotionClient
 from .state import State
 from .writer import Writer
+from .retention import RetentionWorker
 from .sync import activities, chats, directory
 
 
@@ -35,12 +36,13 @@ def _daemon(client: AnthropicClient, notion: NotionClient, state: State, config:
     def stop(*_: object) -> None:
         nonlocal stopping; stopping = True
     signal.signal(signal.SIGTERM, stop); signal.signal(signal.SIGINT, stop)
-    due = {"chats": 0.0, "activities": 0.0, "directory": 0.0}
+    due = {"chats": 0.0, "activities": 0.0, "directory": 0.0, "retention": 0.0}
     while not stopping:
         now = time.monotonic()
         if now >= due["activities"]: activities.sync(client, notion, state, config); due["activities"] = now + config.activity_poll_interval
         if now >= due["chats"]: chats.sync(client, notion, state, config); due["chats"] = now + config.chat_poll_interval
         if now >= due["directory"]: directory.sync(client, notion, state, config); due["directory"] = now + config.directory_poll_interval
+        if now >= due["retention"]: RetentionWorker(notion, state, config).run_once(); due["retention"] = now + config.retention_interval
         time.sleep(min(1.0, max(0.05, min(due.values()) - time.monotonic())))
 
 
