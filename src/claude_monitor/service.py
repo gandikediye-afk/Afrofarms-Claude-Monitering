@@ -23,7 +23,7 @@ LOG = logging.getLogger(__name__)
 
 def _poll_once(config: Config, job: str) -> None:
     """Run one poll in a worker thread with its own SQLite connection."""
-    state = State(config.state_db_path)
+    state = State(config.state_target)
     try:
         client = AnthropicClient(config.compliance_access_key, config.compliance_base_url)
         notion = NotionClient(config.notion_token, config.notion_rate_limit_rps)
@@ -60,7 +60,7 @@ def build_app() -> Starlette:
     async def lifespan(app: Starlette) -> AsyncIterator[None]:
         # Validate the destination before accepting traffic or pulling private content.
         notion = NotionClient(config.notion_token, config.notion_rate_limit_rps)
-        state = State(config.state_db_path)
+        state = State(config.state_target)
         try:
             Writer(notion, state, config).validate_schema()
         finally:

@@ -106,7 +106,7 @@ def _discover(client: NotionClient, locations: list[str]) -> tuple[str | None, d
 
 def _services(config: Config) -> tuple[AnthropicClient, NotionClient, State]:
     return (AnthropicClient(config.compliance_access_key, config.compliance_base_url),
-            NotionClient(config.notion_token, config.notion_rate_limit_rps), State(config.state_db_path))
+            NotionClient(config.notion_token, config.notion_rate_limit_rps), State(config.state_target))
 
 
 def _daemon(client: AnthropicClient, notion: NotionClient, state: State, config: Config, *, transcript_access: bool) -> None:

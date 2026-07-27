@@ -118,6 +118,67 @@ that must be reviewed quarterly.
 `STATE_DB_PATH` must be on a **persistent volume**. Losing it loses the cursors and the
 `chat_id → page_id` index, which forces a full re-backfill.
 
+## 3a. Choose a state backend (this decides your platform)
+
+The state store holds the cursors, the `chat_id -> notion_page_id` index, the content
+hashes, and the durable work queue. **The writer never searches Notion to find a chat's
+page** — that would be eventually consistent and would burn the 3 rps budget — so this
+index is the only link between a chat and its Notion page.
+
+| Host | Filesystem | Backend | Setting |
+|---|---|---|---|
+| Render, Fly.io, Railway, VPS, any container with a volume | persistent | SQLite | `STATE_DB_PATH` |
+| Vercel, AWS Lambda, Cloud Run (no volume) | **ephemeral** | Postgres | `DATABASE_URL` |
+
+`DATABASE_URL` takes precedence over `STATE_DB_PATH` whenever both are set.
+
+Losing the state store is not a slow start — it is data corruption. Measured against the
+mock pipeline, five upstream chats over three runs:
+
+| Scenario | Notion pages | Duplicated chats |
+|---|---|---|
+| SQLite, persistent disk | 5 | 0 |
+| SQLite, ephemeral filesystem | 15 | **5** |
+| Postgres, ephemeral filesystem | 5 | 0 |
+
+Every cold start re-creates every page. Use Postgres anywhere the disk is not durable.
+
+### Deploying on Vercel
+
+`vercel.json` and `api/index.py` are in the repository. Vercel functions are frozen once
+a response is sent, so `service.py`'s background poll loops cannot run there;
+`claude_monitor.serverless` exposes the same ingest endpoint plus cron-driven routes, and
+refuses to start on SQLite rather than silently duplicating your archive.
+
+1. Provision Postgres (Vercel Postgres, Neon, or Supabase) and set `DATABASE_URL` to the
+   **pooled** connection string — one connection per invocation exhausts a direct endpoint.
+2. Set every variable from §3 in Vercel's environment settings, plus `CRON_SECRET`.
+   `STATE_DB_PATH` is ignored when `DATABASE_URL` is set.
+3. Deploy. Vercel installs `requirements.txt` (which pins `pg8000`, pure Python, so there
+   is no build step).
+4. The declared cron schedule drives the polls:
+
+   | Path | Schedule | Job |
+   |---|---|---|
+   | `/api/cron/activities` | every 5 min | Activity Feed catch-up |
+   | `/api/cron/drain` | every 5 min | writes queued OTLP events to Notion |
+   | `/api/cron/chats` | every 15 min | chat + transcript sync |
+   | `/api/cron/directory` | daily 03:00 | members and projects |
+   | `/api/cron/retention` | daily 03:30 | retention and deletion mirroring |
+
+   Cron routes require `Authorization: Bearer $CRON_SECRET`; Vercel sends this
+   automatically. A deployment with no `CRON_SECRET` set returns 401 rather than running
+   unauthenticated.
+5. Point the Office agents OTLP endpoint at `https://<deployment>/` as in §4.
+
+Two caveats specific to Vercel:
+
+- **Sub-daily cron requires a Pro plan.** Hobby runs each cron once per day.
+- **Run the initial backfill off-platform.** At Notion's 2.5 rps a few hundred chats take
+  tens of minutes, beyond any function timeout. Run `claude-monitor backfill` once from a
+  container or laptop with `DATABASE_URL` pointed at the same Postgres, then let the cron
+  schedule maintain it.
+
 ## 4. Configure the OTLP push plane
 
 Deploy `render.yaml` (or the equivalent container definition on your platform), attach the

@@ -58,5 +58,8 @@ The key is never printed. Transcript synchronization stays disabled until the ch
 while the independent OTLP activity collector remains available.
 
 The implementation keeps cursors, idempotency indexes, sanitized durable work, and audit
-runs in SQLite. Binary attachment retrieval remains disabled; only safe attachment metadata
+runs in SQLite, or in Postgres when `DATABASE_URL` is set. Hosts without a persistent
+disk (Vercel, Lambda) **must** use Postgres: losing the state store loses the
+`chat_id -> notion_page_id` index, and the writer then creates a duplicate Notion page for
+every chat on each cold start. See `docs/RUNBOOK.md` §3a. Binary attachment retrieval remains disabled; only safe attachment metadata
 is mirrored.

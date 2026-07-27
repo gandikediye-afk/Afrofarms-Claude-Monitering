@@ -94,6 +94,16 @@ class Config:
     retention_interval: float
     deletion_grace_period: float
     retention_class_days: dict[str, int]
+    database_url: str | None = None
+
+    @property
+    def state_target(self) -> str:
+        """Postgres DSN when configured, else the SQLite path.
+
+        Never wrap a DSN in Path(): it collapses "//" and silently produces an
+        unparseable host.
+        """
+        return self.database_url or str(self.state_db_path)
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -158,6 +168,7 @@ class Config:
             download_attachments=boolean(get("DOWNLOAD_ATTACHMENTS", "false")),
             redaction_enabled=redaction_enabled,
             state_db_path=Path(get("STATE_DB_PATH", "/var/lib/claude-monitor/state.db")),
+            database_url=get("DATABASE_URL") or None,
             production_readiness=readiness,
             notion_parent_page_id=os.environ["NOTION_PARENT_PAGE_ID"].strip(),
             retention_interval=duration(get("RETENTION_INTERVAL", "24h")),

@@ -19,6 +19,11 @@ dependencies = [
 dev = [
   "pytest>=8,<9",
   "httpx>=0.27,<1",
+  "pg8000>=1.31,<2",
+]
+# Serverless//no-persistent-disk deployments store state in Postgres.
+postgres = [
+  "pg8000>=1.31,<2",
 ]
 
 [project.scripts]

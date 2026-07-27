@@ -47,6 +47,16 @@ class Settings:
     notion_token: str | None
     notion_ds_activity: str | None
     notion_rate_limit_rps: float
+    database_url: str | None = None
+
+    @property
+    def state_target(self) -> str:
+        """Postgres DSN when configured, else the SQLite path.
+
+        Never wrap a DSN in Path(): it collapses "//" into "/" and silently
+        yields an unparseable host.
+        """
+        return self.database_url or str(self.state_db_path)
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -66,7 +76,8 @@ class Settings:
         origins = frozenset(x.strip() for x in os.environ.get("OTLP_ALLOWED_ORIGINS", "").split(",") if x.strip())
         return cls(secret, header, maximum, origins,
                    Path(os.environ.get("STATE_DB_PATH", "/var/lib/claude-monitor/state.db")),
-                   os.environ.get("NOTION_TOKEN"), os.environ.get("NOTION_DS_ACTIVITY"), rps)
+                   os.environ.get("NOTION_TOKEN"), os.environ.get("NOTION_DS_ACTIVITY"), rps,
+                   os.environ.get("DATABASE_URL") or None)
 
 
 def _value(value: Any) -> Any:
@@ -286,7 +297,7 @@ def _properties(record: dict[str, Any], state: State) -> dict[str, Any]:
 def _drain(settings: Settings) -> None:
     if not settings.notion_token or not settings.notion_ds_activity:
         return
-    state = State(settings.state_db_path)
+    state = State(settings.state_target)
     try:
         notion = NotionClient(settings.notion_token, settings.notion_rate_limit_rps)
         for item in state.queued(PLANE):
@@ -324,7 +335,7 @@ def create_app(settings: Settings | None = None) -> Starlette:
     @asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncIterator[None]:
         app.state.settings = settings
-        app.state.db = State(settings.state_db_path)
+        app.state.db = State(settings.state_target)
         app.state.wakeup = asyncio.Event(); app.state.wakeup.set()
         worker = asyncio.create_task(_worker(app))
         try:
