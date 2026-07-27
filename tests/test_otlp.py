@@ -77,3 +77,28 @@ def test_plain_http_is_rejected(tmp_path):
         response = client.post("/v1/logs", content=protobuf(envelope()),
                                headers={"authorization": "Bearer secret", "content-type": "application/x-protobuf"})
         assert response.status_code == 400
+
+
+def test_json_protocol_is_accepted_too(tmp_path):
+    """Choosing http/json in the admin console must not drop every event."""
+    with TestClient(create_app(settings(tmp_path)), base_url="https://testserver") as client:
+        response = client.post("/v1/logs", json=envelope("evt-json"),
+                               headers={"authorization": "Bearer secret",
+                                        "content-type": "application/json"})
+        assert response.status_code == 202, response.text
+
+        reader = State(tmp_path / "state.db")
+        try:
+            rows = reader.queued("otel")
+            assert len(rows) == 1
+            assert "private transcript" not in rows[0]["payload"]
+        finally:
+            reader.connection.close()
+
+
+def test_a_genuinely_unsupported_type_reports_415(tmp_path):
+    with TestClient(create_app(settings(tmp_path)), base_url="https://testserver") as client:
+        response = client.post("/v1/logs", content=b"hello",
+                               headers={"authorization": "Bearer secret",
+                                        "content-type": "text/csv"})
+        assert response.status_code == 415, response.text

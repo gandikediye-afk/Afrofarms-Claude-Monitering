@@ -31,6 +31,7 @@ from .state import State, utcnow
 LOG = logging.getLogger(__name__)
 PLANE = "otel"
 PROTO_TYPES = {"application/x-protobuf", "application/protobuf"}
+JSON_TYPES = {"application/json"}
 
 
 class OtlpError(ValueError):
@@ -202,13 +203,25 @@ async def _body(request: Request, maximum: int) -> bytes:
 
 
 def _decode(body: bytes, content_type: str) -> Mapping[str, Any]:
+    """Accept either OTLP/HTTP encoding.
+
+    The admin console's "OTLP protocol" dropdown selects the encoding, and
+    picking the JSON variant must not silently drop every event. Both are
+    decoded to the same envelope shape.
+    """
     media_type = content_type.split(";", 1)[0].strip().lower()
+    # Decide the branch before entering the try: OtlpError subclasses ValueError,
+    # so raising the unsupported-type error inside it would be caught by our own
+    # except clause and downgraded to "malformed payload" (400 instead of 415).
+    if media_type in PROTO_TYPES:
+        decode = lambda: MessageToDict(  # noqa: E731
+            ExportLogsServiceRequest.FromString(body), preserving_proto_field_name=False)
+    elif media_type in JSON_TYPES:
+        decode = lambda: json.loads(body.decode("utf-8"))  # noqa: E731
+    else:
+        raise OtlpError("unsupported Content-Type")
     try:
-        if media_type in PROTO_TYPES:
-            message = ExportLogsServiceRequest.FromString(body)
-            value = MessageToDict(message, preserving_proto_field_name=False)
-        else:
-            raise OtlpError("unsupported Content-Type")
+        value = decode()
     except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
         raise OtlpError("malformed OTLP payload") from exc
     if not isinstance(value, dict):
