@@ -32,6 +32,7 @@ class State:
         CREATE TABLE IF NOT EXISTS object_index (kind TEXT NOT NULL, object_id TEXT NOT NULL, notion_page_id TEXT NOT NULL, content_hash TEXT NOT NULL, PRIMARY KEY(kind, object_id), UNIQUE(kind, notion_page_id));
         CREATE TABLE IF NOT EXISTS work_queue (plane TEXT NOT NULL, object_id TEXT NOT NULL, payload TEXT NOT NULL, enqueued_at TEXT NOT NULL, PRIMARY KEY(plane, object_id));
         CREATE TABLE IF NOT EXISTS claims (kind TEXT NOT NULL, object_id TEXT NOT NULL, claimed_at TEXT NOT NULL, PRIMARY KEY(kind, object_id));
+        CREATE TABLE IF NOT EXISTS pending_writes (kind TEXT NOT NULL, object_id TEXT NOT NULL, content_hash TEXT NOT NULL, started_at TEXT NOT NULL, PRIMARY KEY(kind, object_id));
         COMMIT;
         """)
 
@@ -88,5 +89,14 @@ class State:
     def object(self, kind: str, object_id: str) -> sqlite3.Row | None:
         return self.connection.execute("SELECT * FROM object_index WHERE kind=? AND object_id=?", (kind, object_id)).fetchone()
 
-    def put_object(self, kind: str, object_id: str, page_id: str, content_hash: str) -> None:
-        self.connection.execute("INSERT INTO object_index VALUES(?,?,?,?) ON CONFLICT(kind,object_id) DO UPDATE SET notion_page_id=excluded.notion_page_id,content_hash=excluded.content_hash", (kind, object_id, page_id, content_hash))
+    def put_object(self, kind: str, object_id: str, page_id: str, content_hash: str, *, db: sqlite3.Connection | None = None) -> None:
+        (db or self.connection).execute("INSERT INTO object_index VALUES(?,?,?,?) ON CONFLICT(kind,object_id) DO UPDATE SET notion_page_id=excluded.notion_page_id,content_hash=excluded.content_hash", (kind, object_id, page_id, content_hash))
+
+    def begin_write(self, kind: str, object_id: str, content_hash: str) -> None:
+        self.connection.execute("INSERT INTO pending_writes VALUES(?,?,?,?) ON CONFLICT(kind,object_id) DO UPDATE SET content_hash=excluded.content_hash,started_at=excluded.started_at", (kind, object_id, content_hash, utcnow()))
+
+    def write_pending(self, kind: str, object_id: str) -> bool:
+        return self.connection.execute("SELECT 1 FROM pending_writes WHERE kind=? AND object_id=?", (kind, object_id)).fetchone() is not None
+
+    def finish_write(self, kind: str, object_id: str, *, db: sqlite3.Connection | None = None) -> None:
+        (db or self.connection).execute("DELETE FROM pending_writes WHERE kind=? AND object_id=?", (kind, object_id))
